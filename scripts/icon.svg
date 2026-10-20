@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- 商店图标源文件：与 src/studio/icons.ts 的 iconExcaliStudio 同形，
+       底色换成 Excalidraw 品牌紫，线条转白；经 qlmanage 光栅化为根目录 icon.png（160×160） -->
+  <rect width="1024" height="1024" rx="224" fill="#6965db"/>
+  <g fill="none" stroke="#ffffff" stroke-width="56" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="176" y="216" width="672" height="514" rx="56"/>
+    <path d="M302 608c63-133 130 81 196-49 39-77 84-32 133-63"/>
+  </g>
+</svg>

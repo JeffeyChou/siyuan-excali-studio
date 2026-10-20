@@ -1,0 +1,24 @@
+{
+  "name": "siyuan-excali-studio",
+  "author": "LongDarkroom",
+  "url": "https://github.com/LongDarkroom/siyuan-excali-studio",
+  "version": "0.1.0",
+  "minAppVersion": "3.8.0",
+  "backends": ["all"],
+  "frontends": ["desktop", "mobile", "browser-desktop", "browser-mobile"],
+  "kernels": ["all"],
+  "disabledInPublish": false,
+  "displayName": {
+    "default": "Excali Studio",
+    "zh-CN": "Excali 白板"
+  },
+  "description": {
+    "default": "A self-hosted Excalidraw whiteboard for SiYuan. Hand-drawn canvas with offline fonts, SiYuan theme sync, and SVG export that embeds the editable scene.",
+    "zh-CN": "思源笔记的自建 Excalidraw 白板：手绘风画布、离线字体、跟随思源主题，导出的 SVG 内嵌可再次编辑的 scene。"
+  },
+  "readme": {
+    "default": "README.md",
+    "zh-CN": "README.md"
+  },
+  "keywords": ["excalidraw", "whiteboard", "svg", "白板", "手绘", "画图"]
+}

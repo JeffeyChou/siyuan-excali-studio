@@ -1,0 +1,21 @@
+{
+  "name": "axl-poster",
+  "label": "海报暖纸",
+  "extends": "marker",
+  "background": "#fdf8ec",
+  "ink": "#2b2b2b",
+  "edge": "#c2410c",
+  "muted": "#7c6f64",
+  "palette": ["#ffe9a8", "#ffd8a8", "#d8edda", "#f6ddbd", "#e7d9f2", "#cfe7f5"],
+  "fontSizes": { "title": 34, "node": 17, "edge": 14, "caption": 14 },
+  "space": { "minW": 200, "padX": 44, "padY": 32, "gapX": 150, "gapY": 56, "textWrap": 240 },
+  "groupColor": {
+    "mode": "roles",
+    "roles": {
+      "标题": "#ffe9a8",
+      "正文": "#ffffff",
+      "重点": "#f6ddbd",
+      "侧栏": "#e7d9f2"
+    }
+  }
+}

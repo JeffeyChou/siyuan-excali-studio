@@ -1,0 +1,23 @@
+{
+  "name": "study-card",
+  "label": "学习卡",
+  "extends": "pencil",
+  "background": "#fffdf7",
+  "ink": "#1e3a5f",
+  "fill": "#eef4fb",
+  "edge": "#1e3a5f",
+  "muted": "#6b7f95",
+  "fillStyle": "hachure",
+  "strokeWidth": 1,
+  "fontFamily": 5,
+  "fontSizes": { "title": 24, "node": 15, "edge": 13, "caption": 13 },
+  "space": { "minW": 140, "minH": 72, "padX": 40, "padY": 28, "gapX": 84, "gapY": 48, "textWrap": 180 },
+  "groupColor": {
+    "mode": "roles",
+    "roles": {
+      "概念": "#eef4fb",
+      "例子": "#f3f7e8",
+      "易错": "#fbe9e7"
+    }
+  }
+}

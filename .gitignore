@@ -1,0 +1,20 @@
+# 依赖
+node_modules/
+
+# 构建产物（运行时文件由 copy-dist 拷到根目录，package.zip 由 pack.mjs 产出）
+dist/
+dist-engine/
+dist-kernel/
+dist-lib/
+
+# 发布资产（只通过 GitHub Release 上传，不进仓库）
+package.zip
+
+# 系统垃圾
+.DS_Store
+__MACOSX/
+*.tmp
+
+# 日志与临时
+npm-debug.log*
+*.log

@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<!--
+  siyuan-excali-studio · 嵌入渲染页（方向 A 画布内嵌思源块）
+  Embeddable iframe 的 src 指向本页：/plugins/siyuan-excali-studio/embed/siyuan/index.html?blockId=<id>&theme=<light|dark>
+
+  数据通道（与内核同源，零依赖、零打包）：
+    POST /api/block/getBlockDOM {id} → data.dom —— 思源内核原生渲染的块 HTML（Lute 渲染，
+    质量与正文一致，支持 markdown / 代码高亮标记 / 数学公式 span / 图片等）。
+  本页只做三件事：拉 DOM → 修正相对资源路径 → 注入排版。渲染完全交给内核，本页无解析器。
+
+  参考机制：siyuan-embed-excalidraw 的 embed/siyuan 页（同源 fetch 思源内核 API、URL 传参、
+  右上角悬浮按钮）。只借设计不抄代码（AGPL 纪律）：它走 exportMdContent + Vditor 自渲染，
+  本页改走 getBlockDOM 原生 DOM，无第三方库。
+-->
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SiYuan Block in Excali Studio</title>
+  <style>
+    /* 主题：URL 参数 theme=light|dark 优先（创建嵌入时画布按当时主题写进 link），
+       缺省回落 prefers-color-scheme。切换画布主题后 iframe 主题要重开画布才更新。 */
+    :root {
+      --exs-bg: #ffffff;
+      --exs-fg: #1e1e1e;
+      --exs-fg-secondary: #6b7280;
+      --exs-border: #e5e7eb;
+      --exs-accent: #3575f0;
+      --exs-code-bg: #f5f5f5;
+      --exs-quote-bg: #fafafa;
+      --exs-mark: rgba(255, 212, 0, 0.5);
+    }
+    body.theme-dark {
+      --exs-bg: #1b1b1f;
+      --exs-fg: #d5d5d9;
+      --exs-fg-secondary: #9ca3af;
+      --exs-border: #333338;
+      --exs-accent: #6d9bff;
+      --exs-code-bg: #26262b;
+      --exs-quote-bg: #212127;
+      --exs-mark: rgba(255, 212, 0, 0.28);
+    }
+    * { box-sizing: border-box; }
+    body, #preview {
+      margin: 0; padding: 0; width: 100vw; min-height: 100vh; overflow: hidden;
+      background: var(--exs-bg); color: var(--exs-fg);
+      font: 14px/1.7 "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    #preview { padding: 14px 16px; }
+
+    /* 悬浮按钮条：右上角，hover 画布时淡入（对齐对方插件的交互） */
+    #buttons {
+      position: fixed; top: 8px; right: 8px; display: flex; gap: 6px; z-index: 10;
+      opacity: 0; pointer-events: none; transition: opacity 0.18s ease;
+    }
+    body:hover #buttons { opacity: 1; pointer-events: auto; }
+    #buttons a, #buttons button {
+      padding: 3px 10px; font-size: 12px; border: 1px solid var(--exs-border);
+      border-radius: 6px; background: var(--exs-bg); color: var(--exs-fg-secondary);
+      cursor: pointer; text-decoration: none; line-height: 1.6; user-select: none;
+    }
+    #buttons a:hover, #buttons button:hover { color: var(--exs-accent); border-color: var(--exs-accent); }
+
+    /* 排版（尽量对齐思源正文的视觉层级；无思源样式表，自己兜一层） */
+    #preview h1, #preview h2, #preview h3, #preview h4, #preview h5, #preview h6 { margin: 0.9em 0 0.4em; line-height: 1.4; }
+    #preview h1 { font-size: 1.5em; } #preview h2 { font-size: 1.3em; } #preview h3 { font-size: 1.15em; }
+    #preview p { margin: 0.35em 0; }
+    #preview ul, #preview ol { margin: 0.35em 0; padding-left: 1.5em; }
+    #preview a { color: var(--exs-accent); text-decoration: none; }
+    #preview blockquote {
+      margin: 0.6em 0; padding: 2px 12px; border-left: 3px solid var(--exs-border);
+      background: var(--exs-quote-bg); border-radius: 0 4px 4px 0; color: var(--exs-fg-secondary);
+    }
+    #preview pre, .hljs, .language-abc { overflow: hidden; border-radius: 6px; }
+    #preview pre { background: var(--exs-code-bg); padding: 10px 12px; margin: 0.5em 0; }
+    #preview code { font-family: "JetBrains Mono", Menlo, Consolas, monospace; font-size: 0.92em; }
+    #preview :not(pre) > code { background: var(--exs-code-bg); padding: 1px 5px; border-radius: 4px; }
+    #preview img { max-width: 100%; border-radius: 4px; }
+    #preview table { border-collapse: collapse; margin: 0.5em 0; }
+    #preview th, #preview td { border: 1px solid var(--exs-border); padding: 4px 10px; }
+    #preview mark, #preview .mark { background: var(--exs-mark); }
+    #preview hr { border: none; border-top: 1px solid var(--exs-border); margin: 1em 0; }
+    #preview .katex { font-size: 1.05em; }
+
+    /* 状态层：加载中 / 出错 */
+    #status {
+      display: flex; align-items: center; justify-content: center; height: 100vh;
+      color: var(--exs-fg-secondary); font-size: 13px; white-space: pre-line; text-align: center; padding: 0 24px;
+    }
+    #preview.has-status { display: none; }
+  </style>
+</head>
+<body>
+  <div id="buttons">
+    <button id="refresh" title="重新加载">刷新</button>
+    <a id="open" title="在思源中打开此块" href="#" target="_top">在思源中打开</a>
+  </div>
+  <div id="status"></div>
+  <div id="preview"></div>
+  <script>
+    (function () {
+      var qs = new URLSearchParams(window.location.search);
+      var blockId = qs.get("blockId") || "";
+      var theme = qs.get("theme");
+      if (theme === "light" || theme === "dark") {
+        document.body.classList.add("theme-" + theme);
+      } else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+        document.body.classList.add("theme-dark");
+      }
+
+      var statusEl = document.getElementById("status");
+      var previewEl = document.getElementById("preview");
+
+      function showStatus(text) {
+        statusEl.textContent = text;
+        statusEl.style.display = "flex";
+        previewEl.classList.add("has-status");
+      }
+      function showPreview() {
+        statusEl.style.display = "none";
+        previewEl.classList.remove("has-status");
+      }
+
+      // 思源正文里的资源引用是相对 workspace 的 assets/…，iframe 的根路径恰好也是
+      // 内核根（127.0.0.1:6806），但正文 DOM 里常见不带前导斜杠的写法，统一补成根相对路径。
+      function fixAssets(html) {
+        return html
+          .replace(/(src|href)="assets\//g, '$1="/assets/')
+          .replace(/(src|href)="(emojis|fonts)\//g, '$1="/$2/');
+      }
+
+      function render() {
+        if (!blockId) {
+          showStatus("缺少 blockId 参数\n（嵌入元素需要带 ?blockId=…）");
+          return;
+        }
+        document.getElementById("open").href = "siyuan://blocks/" + encodeURIComponent(blockId);
+        showStatus("加载中…");
+        fetch("/api/block/getBlockDOM", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: blockId }),
+        })
+          .then(function (res) { return res.json(); })
+          .then(function (payload) {
+            if (payload && payload.code === 0 && payload.data && payload.data.dom) {
+              previewEl.innerHTML = fixAssets(String(payload.data.dom));
+              showPreview();
+            } else {
+              showStatus("读取块失败：" + ((payload && payload.msg) || "未知错误") + "\n\n块可能已被删除或不可访问");
+            }
+          })
+          .catch(function (e) {
+            showStatus("加载失败：" + (e && e.message ? e.message : e));
+          });
+      }
+
+      document.getElementById("refresh").addEventListener("click", render);
+      render();
+    })();
+  </script>
+</body>
+</html>

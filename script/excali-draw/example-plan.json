@@ -1,0 +1,24 @@
+{
+  "title": "Excali Studio 协作流程",
+  "caption": "内置智能体实时画布，外部智能体走 CLI；同一套计划 DSL。",
+  "preset": "marker",
+  "layout": "lr",
+  "nodes": [
+    { "id": "ask", "label": "用户提出画图需求", "shape": "rounded", "group": "user" },
+    { "id": "plan", "label": "智能体生成计划 JSON", "group": "agent" },
+    { "id": "which", "label": "在哪一侧执行？", "shape": "diamond", "group": "agent" },
+    { "id": "front", "label": "思源内置智能体", "group": "siyuan" },
+    { "id": "cli", "label": "Qoder / WorkBuddy CLI", "group": "external" },
+    { "id": "board", "label": "assets/excali/xxx.svg", "group": "result" },
+    { "id": "open", "label": "思源里打开白板", "shape": "rounded", "group": "result" }
+  ],
+  "edges": [
+    { "from": "ask", "to": "plan", "label": "描述" },
+    { "from": "plan", "to": "which" },
+    { "from": "which", "to": "front", "label": "在思源内" },
+    { "from": "which", "to": "cli", "label": "外部 agent" },
+    { "from": "front", "to": "board", "label": "实时绘制" },
+    { "from": "cli", "to": "board", "label": "落盘" },
+    { "from": "board", "to": "open" }
+  ]
+}

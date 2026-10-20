@@ -1,0 +1,12 @@
+{
+  "date": "2026-10-17T09:26:28.185Z",
+  "nElements": 1000,
+  "nImages": 50,
+  "imageBytes": 40960,
+  "jsonBytes": 3578840,
+  "tDeflateMs": 195.911708,
+  "tBase64Ms": 0.22933399999999438,
+  "svgSizeBytes": 4468802,
+  "tDecodeMs": 215.88045799999998,
+  "externalRefSizeBytes": 176050
+}
