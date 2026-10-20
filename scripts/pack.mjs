@@ -15,7 +15,8 @@ const OUT = "package.zip";
 
 const FILES = ["plugin.json", "index.js", "index.css", "engine.js", "kernel.js", "icon.png", "preview.png", "README.md"];
 // embed/：画布内嵌思源块的 Embeddable 渲染页（copy-dist 从 src-embed/siyuan/ 拷来）
-const DIRS = ["i18n", "fonts", "embed"];
+// demo/：AI 绘图效果图（README 效果展示引用；集市渲染 README 相对路径需同包）
+const DIRS = ["i18n", "fonts", "embed", "demo"];
 
 let failed = false;
 for (const f of FILES) {
