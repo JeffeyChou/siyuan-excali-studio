@@ -38,7 +38,22 @@ const pkg = JSON.parse(readFileSync(join(ROOT, "plugin.json"), "utf8"));
 const zipPath = join(ROOT, OUT);
 if (existsSync(zipPath)) rmSync(zipPath);
 
-execFileSync("zip", ["-r", "-X", "-q", OUT, ...FILES, ...DIRS], { cwd: ROOT, stdio: "inherit" });
+// 排除 macOS 开发残留：__MACOSX 元数据目录、.DS_Store 及其 AppleDouble 伴生文件（._*）。
+// 思源数据同步会忽略点开头条目（data/.siyuan 除外），包内残留会导致其他设备上界面与行为不一致，
+// 集市自动化检查（github-actions Bot）会因此打回 PR。
+const EXCLUDE = ["__MACOSX*", "*.DS_Store", "._*", "*/._*"];
+execFileSync("zip", ["-r", "-X", "-q", OUT, ...FILES, ...DIRS, "-x", ...EXCLUDE], { cwd: ROOT, stdio: "inherit" });
+
+// 集市红线自检：zip 条目名不得含点开头文件 / __MACOSX / AppleDouble 伴生，有则打包失败
+const entries = execFileSync("unzip", ["-Z1", OUT], { cwd: ROOT, encoding: "utf8" }).trim().split("\n");
+const bad = entries.filter((e) => {
+  const base = e.split("/").filter(Boolean).pop() ?? "";
+  return e.includes("__MACOSX") || base.startsWith(".") || base.startsWith("._");
+});
+if (bad.length) {
+  console.error(`[pack] 含集市不允许的点开头条目：\n  ${bad.join("\n  ")}`);
+  process.exit(1);
+}
 
 const size = statSync(zipPath).size;
 console.log(`[pack] ${pkg.name} v${pkg.version} -> ${OUT}（${(size / 1024 / 1024).toFixed(1)} MB）`);
