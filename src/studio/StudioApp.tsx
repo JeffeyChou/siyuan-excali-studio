@@ -23,9 +23,13 @@ import { excalidrawLangCode, t } from "../i18n";
 import { themeBgForMode, readSiyuanThemeMode, readThemeBgSlots, watchSiyuanThemeMode, withThemeBgSlot, type ThemeMode } from "./theme";
 import { StudioMenu } from "./StudioMenu";
 import { ScriptRail, type ScriptRailItem } from "./ScriptRail";
+import { LineIcon } from "./line-icon";
+import { ICON_DELETE, ICON_DUPLICATE, ICON_MINUS, ICON_PALETTE, ICON_PLUS, ICON_REDO, ICON_UNDO } from "./menu-icons";
 import { AiChannelsPanel } from "./AiChannelsPanel";
 import type { AiChannels, ChannelId } from "./ai/channels";
-import { INSERT_BOARD_CARD, OUTLINE_COLOR, railActionOf, type RailActionId, type RailActionMeta } from "./rail-actions.ts";
+import { IMAGE_TO_MATERIAL, INSERT_BOARD_CARD, OUTLINE_COLOR, railActionOf, type RailActionId, type RailActionMeta } from "./rail-actions.ts";
+import { imageTargetMessageKey, pickImageTarget, type ImageLike } from "./image-to-material.ts";
+import { ImageToMaterialDialog } from "./ImageToMaterialDialog";
 import { outlineTargets } from "./outline.ts";
 import type { ScriptRunOpts } from "./ea-api";
 import { HIGHLIGHTER_EVENT, RAIL_VIEW_EVENT, SCRIPT_PIN_EVENT } from "./script-pin";
@@ -371,6 +375,16 @@ export function StudioApp(props: StudioProps) {
   const [dirty, setDirty] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [importLibOpen, setImportLibOpen] = useState(false);
+  // 第四十六轮 B2 批：对标 fork TrayMenu——选中只门控底栏中段 [🎨⧉🗑]（翻转才
+  // setState，拖拽每帧零成本）；面板由 🎨 真开关控制（fork toggleTrayEditMenu 同构：
+  // 面板 = 开关开 且 有选中），取消选中面板自动收、开关记忆保留。
+  const [hasSelection, setHasSelection] = useState(false);
+  const hasSelectionRef = useRef(false);
+  const [propsOpen, setPropsOpen] = useState(false);
+  const [zoomPercent, setZoomPercent] = useState(100);
+  const zoomPercentRef = useRef(100);
+  /** 2026-10-21 P1：图片转素材弹窗的目标图片；null = 关着 */
+  const [imageToMaterialId, setImageToMaterialId] = useState<string | null>(null);
 
   // 2026-10-19：素材库三项动作住进面板 ⋮ 菜单（vendor 硬编码无扩展点，DOM 注入，
   // 见 library-menu-inject.ts）——☰ 主菜单不再保留这三个入口。actions 用 getter
@@ -488,13 +502,36 @@ export function StudioApp(props: StudioProps) {
   const [outlineRequest, setOutlineRequest] = useState(0);
   const requestOutline = useCallback((): void => setOutlineRequest((n) => n + 1), []);
 
+  /**
+   * 2026-10-21 P1：图片转笔画素材——打开前先把选区判掉。
+   * 只认恰好一张图片；没内嵌 dataURL 的也别进弹窗（进去只能看到报错）。
+   */
+  const openImageToMaterial = useCallback((): void => {
+    if (!api) return;
+    const selected = Object.keys(api.getAppState().selectedElementIds ?? {});
+    const target = pickImageTarget(api.getSceneElements() as unknown as ImageLike[], selected);
+    const msgKey = imageTargetMessageKey(target);
+    if (msgKey) {
+      notify(t(msgKey));
+      return;
+    }
+    if (target.kind !== "ok") return;
+    const file = api.getFiles()[String(target.image.fileId ?? "")] as { dataURL?: string } | undefined;
+    if (typeof file?.dataURL !== "string" || file.dataURL === "") {
+      notify(t("这张图片没有内嵌数据，无法转换（请重新插入图片）。"));
+      return;
+    }
+    setImageToMaterialId(target.image.id);
+  }, [api, notify]);
+
   /** 竖条/库面板之外的入口：第四十轮起 ☰ 不再挂这一项，动作只从竖条走这条本地通道 */
   const runRailAction = useCallback(
     (id: RailActionId): void => {
       if (id === INSERT_BOARD_CARD) void insertBoardCardFlow();
       else if (id === OUTLINE_COLOR) requestOutline();
+      else if (id === IMAGE_TO_MATERIAL) openImageToMaterial();
     },
-    [insertBoardCardFlow, requestOutline],
+    [insertBoardCardFlow, openImageToMaterial, requestOutline],
   );
 
   /** 第四十四轮：AI 通道面板——快照从宿主设置现拉；开关即写回（agent 一栏的重载提示在宿主侧） */
@@ -707,6 +744,17 @@ export function StudioApp(props: StudioProps) {
         sidebarOpenRef.current = sidebar;
         setSidebarOpen(sidebar);
       }
+      // 第四十六轮 B2 批：选中态驱动底栏中段三键 + zoom 百分比（都只在翻转时 setState）。
+      const hasSel = Object.keys(appState.selectedElementIds ?? {}).length > 0;
+      if (hasSel !== hasSelectionRef.current) {
+        hasSelectionRef.current = hasSel;
+        setHasSelection(hasSel);
+      }
+      const zoomPct = Math.round((appState.zoom?.value ?? 1) * 100);
+      if (zoomPct !== zoomPercentRef.current) {
+        zoomPercentRef.current = zoomPct;
+        setZoomPercent(zoomPct);
+      }
       // 第二十一轮：每次回调都重排防抖（每帧重置 = 拖拽中不落盘、松手约 1 秒落）。
       // 放在指纹判定之外：busy/守卫跳过的轮次也靠后续交互把定时器再排上。
       scheduleAutoSave();
@@ -805,10 +853,11 @@ export function StudioApp(props: StudioProps) {
         insertCard(ref, title, { x: c.x - CARD_W / 2, y: c.y - CARD_H / 2 });
       },
       openOutlinePalette: requestOutline,
+      openImageToMaterial,
     };
     registerActions(actions);
     return () => registerActions(null);
-  }, [api, eaHandle, insertCard, registerActions, flush, requestOutline]);
+  }, [api, eaHandle, insertCard, registerActions, flush, requestOutline, openImageToMaterial]);
 
   // 2026-10-15 阶段 A → 第二十一轮：自动保存从「60s 定时 + 失焦 + 切走」收敛成
   // 「防抖（handleChange 里排）+ 失焦/切走立即冲刷」。定时器在防抖上线后退役——
@@ -865,6 +914,38 @@ export function StudioApp(props: StudioProps) {
   const openMermaid = useCallback(() => {
     api?.updateScene({ appState: { openDialog: { name: "ttd", tab: "mermaid" } } });
   }, [api]);
+
+  /**
+   * 第四十六轮 B2 批：底栏五键——不碰 vendor 内部，合成键盘事件走 vendor 自己的
+   * action 通道（keyTest 抄 fork 源码）：⌘D=复制、Delete=删除、⌘Z=撤销、
+   * ⌘⇧Z=重做、⌘(=|−|0)=放大/缩小/重置缩放（zoom 三键的 keyTest 是 code 加
+   * ⌘/Shift，⌘ 已满足）。撤销栈与缩放锚点（视口中心）原生完整。
+   */
+  const fireVendorAction = useCallback(
+    (key: string, code: string, opts?: { shift?: boolean }) => {
+      const isApple = /Mac|iPhone|iPad/.test(navigator.userAgent);
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key,
+          code,
+          metaKey: isApple,
+          ctrlKey: !isApple,
+          shiftKey: opts?.shift ?? false,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    },
+    [],
+  );
+
+  const duplicateSelection = useCallback(() => fireVendorAction("d", "KeyD"), [fireVendorAction]);
+  const deleteSelection = useCallback(() => fireVendorAction("Delete", "Delete"), [fireVendorAction]);
+  const undoSelection = useCallback(() => fireVendorAction("z", "KeyZ"), [fireVendorAction]);
+  const redoSelection = useCallback(() => fireVendorAction("z", "KeyZ", { shift: true }), [fireVendorAction]);
+  const zoomIn = useCallback(() => fireVendorAction("=", "Equal"), [fireVendorAction]);
+  const zoomOut = useCallback(() => fireVendorAction("-", "Minus"), [fireVendorAction]);
+  const zoomReset = useCallback(() => fireVendorAction("0", "Digit0"), [fireVendorAction]);
 
   /**
    * 第三十八轮：荧光笔的三个动作（都在 ScriptRail 里触发）。
@@ -994,7 +1075,13 @@ export function StudioApp(props: StudioProps) {
 
   return (
     <div
-      className="exs-root"
+      className={[
+        "exs-root",
+        hasSelection ? "exs-selection" : "",
+        propsOpen && hasSelection ? "exs-props-open" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
       data-theme-mode={mode}
       ref={rootRef}
       onDragOver={(e) => e.preventDefault()}
@@ -1046,6 +1133,50 @@ export function StudioApp(props: StudioProps) {
         </Excalidraw>
       </div>
       {/*
+        第四十六轮 B2 批：底栏（对标 fork TrayMenu 的 flex 流）。中段 [🎨⧉🗑] 与
+        ↶↷ 同住一条 pill（exs-bottom-bar 本体），按钮出现时 pill 自然长宽、zoom
+        pill 被推走——无绝对定位魔法 margin；🎨 是面板真开关（fork toggleTrayEditMenu
+        同构），⧉/🗑/↶/↷/缩放全走合成键盘事件的 vendor action 通道。
+      */}
+      <div className="exs-bottom-dock">
+        <div className="exs-bottom-bar">
+          <div className="exs-sel-group">
+            <button
+              type="button"
+              className={propsOpen ? "exs-bar-btn exs-bar-btn--on" : "exs-bar-btn"}
+              title={t("样式面板")}
+              aria-pressed={propsOpen}
+              onClick={() => setPropsOpen(!propsOpen)}
+            >
+              <LineIcon strokeWidth={2} d={ICON_PALETTE} size={16} />
+            </button>
+            <button type="button" className="exs-bar-btn" title={t("复制")} onClick={duplicateSelection}>
+              <LineIcon strokeWidth={2} d={ICON_DUPLICATE} size={16} />
+            </button>
+            <button type="button" className="exs-bar-btn" title={t("删除")} onClick={deleteSelection}>
+              <LineIcon strokeWidth={2} d={ICON_DELETE} size={16} />
+            </button>
+          </div>
+          <button type="button" className="exs-bar-btn" title={t("撤销")} onClick={undoSelection}>
+            <LineIcon strokeWidth={2} d={ICON_UNDO} size={16} />
+          </button>
+          <button type="button" className="exs-bar-btn" title={t("重做")} onClick={redoSelection}>
+            <LineIcon strokeWidth={2} d={ICON_REDO} size={16} />
+          </button>
+        </div>
+        <div className="exs-zoom-pill">
+          <button type="button" className="exs-bar-btn" title={t("缩小")} onClick={zoomOut}>
+            <LineIcon strokeWidth={2} d={ICON_MINUS} size={16} />
+          </button>
+          <button type="button" className="exs-zoom-reset" title={t("重置缩放")} onClick={zoomReset}>
+            {zoomPercent}%
+          </button>
+          <button type="button" className="exs-bar-btn" title={t("放大")} onClick={zoomIn}>
+            <LineIcon strokeWidth={2} d={ICON_PLUS} size={16} />
+          </button>
+        </div>
+      </div>
+      {/*
         第三十四轮：右缘脚本侧边栏（对标 Obsidian 固定按钮到侧边栏；样式见 .exs-script-rail）。
         第三十八轮：荧光笔也住这儿——竖条顶部一枚按钮，色板是它的不占位浮层。
         右上角的 PenRail 条同时退役：四支墨水笔 vendor 铅笔工具已覆盖，常驻六枚反而挤。
@@ -1082,6 +1213,14 @@ export function StudioApp(props: StudioProps) {
       ) : null}
       {importLibOpen ? (
         <LibraryImportDialog api={api} onClose={() => setImportLibOpen(false)} notify={notify} libDirAbs={libDirAbs} />
+      ) : null}
+      {imageToMaterialId ? (
+        <ImageToMaterialDialog
+          api={api}
+          imageId={imageToMaterialId}
+          onClose={() => setImageToMaterialId(null)}
+          notify={notify}
+        />
       ) : null}
       {aiOpen && aiChannels ? (
         <AiChannelsPanel channels={aiChannels} onToggle={toggleAiChannel} onClose={() => setAiOpen(false)} />

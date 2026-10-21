@@ -924,6 +924,115 @@ ea.notify("荧光笔：" + p.color + " · 约 " + Math.round(p.width * 4.25) + "
 \`\`\`
 `;
 
+const MATERIAL_RECIPE_SCRIPT = `# 素材配方（改色 / 重新生成）
+
+把「图片转轮廓」生成的素材按配方重做一遍：换墨色、整体透明度、缩放，或调每一层的浓淡与
+简化程度。选中一个素材元素组即可——配方会从元素上读回来（不必先入库）。
+
+前提：素材必须由「右缘竖条 → 图片转素材 → 轮廓（高保真）」生成，也只有那种素材才带
+配方。普通的矩形/椭圆/手绘元素没有配方，脚本会直接提示。
+
+- 墨色填` + "`#1e1e1e`" + ` 这类 16 进制值；留空表示不改。
+- 缩放填倍数（` + "`1.5`" + ` = 放大五成）；留空表示不改。
+- 整体透明度填 0-100；留空表示不改。
+- 分层浓淡留空 = 用原配方；填 ` + "`浓,淡,很浓" + ` 这样按层给（逗号分隔，从最淡到最浓）。
+
+改完按「替换选中」直接改画布，或按「另存为新素材」写进素材库（可反复复用）。
+
+\`\`\`js
+const RECIPE_KEY = "excaliRecipe";
+
+const ids = ea.getSelectedElements();
+if (ids.length === 0) {
+  ea.notify("请先选中一个「图片转轮廓」生成的素材");
+  return;
+}
+
+const els = ids.map((id) => ea.getElement(id)).filter(Boolean);
+const recipe = els.map((e) => e[RECIPE_KEY]).find(Boolean);
+if (!recipe || typeof recipe !== "object" || !Array.isArray(recipe.layers)) {
+  ea.notify("选区里没有配方：请用「图片转素材 → 轮廓（高保真）」生成后再选中它");
+  return;
+}
+
+const box = ea.getBoundingBox(ids);
+if (!box) {
+  ea.notify("选区没有可处理的内容");
+  return;
+}
+
+// 逐层读回原来的浓度；新的整体透明度与颜色留空 = 不改
+const baseOpacity = els.length ? els[0].opacity : 100;
+const baseColor = els.length ? els[0].backgroundColor : "#1e1e1e";
+
+const color = (await ea.utils.inputPrompt("墨色（16 进制，如 #1e1e1e；留空不改）", "text", "")).trim();
+const scaleRaw = (await ea.utils.inputPrompt("缩放倍数（留空不改）", "text", "")).trim();
+const opacityRaw = (await ea.utils.inputPrompt("整体透明度 0-100（留空不改）", "text", "")).trim();
+const layersRaw = (await ea.utils.inputPrompt("分层浓淡（逗号分隔，从最淡到最浓；留空沿用原配方）", "text", "")).trim();
+
+const opacity = opacityRaw === "" ? baseOpacity : Math.max(1, Math.min(100, parseFloat(opacityRaw) || baseOpacity));
+const scale = scaleRaw === "" ? 1 : Math.max(0.05, parseFloat(scaleRaw) || 1);
+
+let layers = recipe.layers.slice();
+if (layersRaw !== "") {
+  const parts = layersRaw.split(/[,，]/).map((s) => parseFloat(s)).filter((n) => !isNaN(n));
+  if (parts.length > 0) {
+    layers = layers.map((l, i) => (i < parts.length ? Object.assign({}, l, { opacity: Math.max(1, Math.min(100, parts[i])) }) : l));
+  }
+}
+
+const fill = color !== "" && /^#[0-9a-fA-F]{3,8}$/.test(color) ? color : baseColor;
+const changes = [];
+if (fill !== baseColor) changes.push("颜色 " + baseColor + " → " + fill);
+if (opacity !== baseOpacity) changes.push("透明度 " + baseOpacity + "% → " + opacity + "%");
+if (scale !== 1) changes.push("缩放 ×" + scale);
+if (layersRaw !== "") changes.push("分层 " + layersRaw);
+if (changes.length === 0) {
+  ea.notify("没有改动任何参数，什么都没做");
+  return;
+}
+
+const patch = { backgroundColor: fill, opacity: opacity };
+ea.setStyle(ids, patch);
+if (scale !== 1) {
+  // 等比缩放：先按倍数挪左上角，再按倍数改宽高（points 由引擎按新尺寸重算）
+  const w = Math.max(1, Math.round(box.width * scale));
+  const h = Math.max(1, Math.round(box.height * scale));
+  ea.setPosition(ids[0], box.minX, box.minY);
+  ea.setStyle(ids, { width: w, height: h });
+}
+
+// 配方随元素一起带走：setStyle 走 updateScene，未知字段引擎会原样保留
+const nextRecipe = Object.assign({}, recipe, {
+  strokeColor: fill,
+  layers: layers,
+  v: 1,
+});
+ea.setStyle(ids, { excaliRecipe: nextRecipe });
+
+const where = await ea.utils.selectOption({
+  options: [
+    { value: "canvas", label: "替换选中（改画布上这一份）" },
+    { value: "library", label: "另存为新素材（写进素材库）" },
+  ],
+});
+
+if (where === "library") {
+  const now = Date.now();
+  await ea.addLibraryItem({
+    id: "lib-recipe-" + now.toString(36),
+    name: "配方素材 " + new Date(now).toLocaleTimeString(),
+    elements: ea.getElements().filter((e) => ids.indexOf(e.id) >= 0),
+    excaliRecipe: nextRecipe,
+  });
+  ea.notify("已写入素材库：" + changes.join("，"));
+  return;
+}
+
+ea.notify("已按配方重做：" + changes.join("，"));
+\`\`\`
+`;
+
 export const BUILTIN_SCRIPTS: Array<{ file: string; content: string }> = [
   { file: "mindmap-from-headings.md", content: MINDMAP_SCRIPT },
   { file: "table-from-markdown.md", content: TABLE_SCRIPT },
@@ -941,6 +1050,7 @@ export const BUILTIN_SCRIPTS: Array<{ file: string; content: string }> = [
   { file: "change-shape.md", content: RESHAPE_SCRIPT },
   { file: "text-numbering.md", content: NUMBERING_SCRIPT },
   { file: "highlighter.md", content: HIGHLIGHTER_SCRIPT },
+  { file: "material-recipe.md", content: MATERIAL_RECIPE_SCRIPT },
 ];
 
 const BUILTIN_FILES = new Set(BUILTIN_SCRIPTS.map((s) => s.file));

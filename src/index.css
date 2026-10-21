@@ -977,6 +977,72 @@
   justify-content: flex-end;
 }
 
+/* 图片转笔画（2026-10-21 P1）：原图/结果双预览 + 细节档位 + 替换/入库 */
+.exs-i2m-dialog {
+  width: min(560px, 94%);
+  max-height: 90%;
+  overflow: auto;
+  background: var(--b3-theme-background, #fff);
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+.exs-i2m-dialog h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 500;
+}
+.exs-i2m-previews {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 0 0 12px;
+}
+.exs-i2m-figure {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.exs-i2m-preview {
+  height: 168px;
+  border: 0.5px solid var(--b3-border-color, rgba(0, 0, 0, 0.12));
+  border-radius: 8px;
+  /* 固定白纸：深色主题下也能看清深墨与浅墨 */
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.exs-i2m-preview img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.exs-i2m-cap {
+  font-size: 12px;
+  color: var(--b3-theme-on-surface-light, #888);
+  text-align: center;
+}
+.exs-i2m-busy {
+  font-size: 12px;
+  color: #888;
+}
+.exs-i2m-stats {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--b3-theme-on-surface-light, #888);
+}
+@media (max-width: 520px) {
+  .exs-i2m-previews {
+    grid-template-columns: 1fr;
+  }
+  .exs-i2m-preview {
+    height: 130px;
+  }
+}
+
 /* 命名对话框与文件列表（挂在思源 Dialog 内，用它的 b3 组件类） */
 .exs-name-tip {
   font-size: 12px;
@@ -1209,6 +1275,19 @@
 
   --exs-font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
     "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+
+  /* 第四十六轮：vendor pill 两变量镜像——底栏 .exs-bottom-dock 挂在 .excalidraw 外
+     继承不到 vendor 主题变量；.excalidraw 内 vendor 自有定义更近，不受这里影响 */
+  --island-bg-color: #ffffff;
+  --color-surface-lowest: #ffffff;
+  /* B2 细化：vendor 的 pill 环色在白底画布上不可见，底栏描边改用自家灰 */
+  --exs-pill-border: rgba(0, 0, 0, 0.12);
+  /* B2 质感轮：值抄 fork theme.scss——阴影 = --shadow-island，灰块 = --color-surface-low */
+  --exs-pill-shadow: 0 0 1px 0 rgba(0, 0, 0, 0.17), 0 0 3px 0 rgba(0, 0, 0, 0.08),
+    0 7px 14px 0 rgba(0, 0, 0, 0.05);
+  --exs-pill-tile: #ececf4;
+  --exs-pill-tile-hover: #e2e2ec;
+  --exs-pill-radius: 12px;
 }
 
 .exs-root[data-theme-mode="dark"] {
@@ -1238,6 +1317,16 @@
   --exs-glass-edge: rgba(0, 0, 0, 0.5);
   --exs-glass-shadow: 0 8px 24px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.4);
   --exs-glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+
+  /* 第四十六轮：vendor pill 变量镜像·暗色（值抄 vendor theme--dark） */
+  --island-bg-color: #232329;
+  --color-surface-lowest: hsl(0, 0%, 7%);
+  --exs-pill-border: rgba(255, 255, 255, 0.16);
+  --exs-pill-shadow: 0 0 1px 0 rgba(0, 0, 0, 0.4), 0 0 3px 0 rgba(0, 0, 0, 0.3),
+    0 7px 14px 0 rgba(0, 0, 0, 0.25);
+  --exs-pill-tile: hsl(240, 8%, 20%);
+  --exs-pill-tile-hover: hsl(240, 8%, 26%);
+  --exs-pill-radius: 12px;
 }
 
 /* 焦点环：深色主题在 .theme--dark 上会重设该变量，两套都要盖 */
@@ -1444,7 +1533,7 @@
   margin: 8px 12px 4px;
   color: var(--exs-text-secondary);
   font-family: var(--exs-font-ui);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.01em;
 }
@@ -1743,6 +1832,181 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   }
   .exs-root .exs-ai-sw,
   .exs-root .exs-ai-sw::after {
+    transition: none;
+  }
+}
+
+/* ============ 第四十六轮 B2 批：底栏 Obsidian 化·flex 流版 ============
+
+   调研结论（fork TrayMenu.tsx + obsidianStylingOverrides.css）：Obsidian 底栏的
+   「动画」没有任何 transition——中段三键、undo/redo 在同一条 flex 流里，按钮出现
+   时 pill 自然长宽、zoom Island 被推走；🎨 是真开关（toggleTrayEditMenu），面板
+   = 开关开 且 有选中。本版照抄该机制：一条自家 flex 流（exs-bottom-bar 本体即
+   pill 右半），vendor footer 左列退役；伸缩只给 180ms max-width 过渡。 */
+
+/* ☰ 搬到左下角：锚定 FixedSideContainer_side_top（inset 1rem），与 footer 药丸同线 */
+.exs-root .excalidraw .App-menu_top__left > div:first-child {
+  position: absolute !important;
+  top: auto !important;
+  bottom: 0 !important;
+  left: 0 !important;
+}
+
+/* ☰ 帽 = wrapper 出白 pill 左帽（描边/阴影/3px 内衬），trigger 缩成内嵌灰块
+   （fork filledButtonOnCanvas：bg=--color-surface-low + 白环，这里白环并入帽底） */
+.exs-root .excalidraw .App-menu_top__left > div:first-child {
+  padding: 3px;
+  border: 1px solid var(--exs-pill-border);
+  border-right: none;
+  border-radius: var(--exs-pill-radius) 0 0 var(--exs-pill-radius);
+  background: var(--island-bg-color);
+  box-shadow: var(--exs-pill-shadow);
+}
+
+.exs-root .excalidraw .main-menu-trigger {
+  border: none;
+  border-radius: 8px;
+  background: var(--exs-pill-tile);
+  box-shadow: none;
+}
+
+.exs-root .excalidraw .main-menu-trigger:hover {
+  background: var(--exs-pill-tile-hover);
+}
+
+/* 底部 ☰ 的下拉改朝上开（vendor 默认 top:100% 会开出屏外） */
+.exs-root .excalidraw .App-menu_top__left > div:first-child .dropdown-menu {
+  top: auto;
+  bottom: calc(100% + 8px);
+  margin-top: 0;
+}
+
+/* vendor footer 左列退役：zoom/undo/redo 全部收进自家底栏 */
+.exs-root .excalidraw .layer-ui__wrapper__footer-left {
+  display: none !important;
+}
+
+/* footer-left 藏掉后 footer-right（帮助 ?）成了 .App-menu_bottom（space-between）
+   的唯一子元素，会被排到最左还盖住 ☰——margin-left:auto 推回 vendor 默认的右缘 */
+.exs-root .excalidraw .layer-ui__wrapper__footer-right {
+  margin-left: auto;
+}
+
+/* 底栏 dock：跟在 ☰ 右缘之后；zoom pill 是第二个 Island（fork 同构：双 Island
+   底对齐排一行），主 pill 宽度伸缩时 zoom 自然被推走/靠拢 */
+.exs-root .exs-bottom-dock {
+  position: absolute;
+  left: calc(1rem + 2.25rem + 7px);
+  bottom: 1rem;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 主 pill：bar 本体就是右半 pill——左缘开口接 ☰ 帽，右边自带圆角与描边 */
+.exs-root .exs-bottom-bar {
+  display: flex;
+  align-items: center;
+  height: calc(2.25rem + 6px);
+  padding: 3px;
+  overflow: hidden;
+  border: 1px solid var(--exs-pill-border);
+  border-left: none;
+  border-radius: 0 var(--exs-pill-radius) var(--exs-pill-radius) 0;
+  background: var(--island-bg-color);
+  box-shadow: var(--exs-pill-shadow);
+}
+
+/* 选中中段：fork 用空占位 :empty 隐藏，这里换成 max-width 收展——出现/收回
+   各一次过渡，undo/redo 被自然推走/靠拢，无布局跳变 */
+.exs-root .exs-sel-group {
+  display: flex;
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-width 180ms ease, opacity 140ms ease;
+}
+
+.exs-root.exs-selection .exs-sel-group {
+  max-width: 6.75rem; /* 3 键 × 2.25rem */
+  opacity: 1;
+}
+
+/* 底栏与 zoom pill 通用的方按钮（相邻按钮无缝，hover 底由 pill overflow 裁圆角） */
+.exs-root .exs-bar-btn {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--exs-text);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.exs-root .exs-bar-btn:hover {
+  background: var(--exs-hover);
+  color: var(--exs-text);
+}
+
+/* 🎨 真开关（对标 fork toggleTrayEditMenu 的 checked 态）：开着时强调色 */
+.exs-root .exs-bar-btn--on {
+  color: var(--exs-accent);
+  background: var(--exs-hover);
+}
+
+/* zoom pill：独立的第二个 Island（− | % | +），% 是重置键（vendor 同款文本钮） */
+.exs-root .exs-zoom-pill {
+  display: flex;
+  align-items: center;
+  height: calc(2.25rem + 6px);
+  padding: 3px;
+  overflow: hidden;
+  border: 1px solid var(--exs-pill-border);
+  border-radius: var(--exs-pill-radius);
+  background: var(--island-bg-color);
+  box-shadow: var(--exs-pill-shadow);
+}
+
+.exs-root .exs-zoom-reset {
+  flex: none;
+  min-width: 3.25rem;
+  height: 100%;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  color: var(--exs-text);
+  font-family: var(--exs-font-ui);
+  font-size: 14px;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.exs-root .exs-zoom-reset:hover {
+  background: var(--exs-hover);
+}
+
+/* 属性面板沉底：悬在底栏上方 8px；🎨 开关关着时不渲染感（vendor 仍挂载，靠根类收起） */
+.exs-root .excalidraw .App-menu__left {
+  top: auto;
+  left: 0;
+  bottom: 3.75rem;
+}
+
+.exs-root:not(.exs-props-open) .excalidraw .App-menu__left {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .exs-root .exs-sel-group,
+  .exs-root .exs-bar-btn,
+  .exs-root .exs-zoom-reset {
     transition: none;
   }
 }

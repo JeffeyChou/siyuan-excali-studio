@@ -273,11 +273,18 @@ export async function renameSvg(oldPath: string, newPath: string): Promise<strin
  *   上一次好备份挤出链条（自动保存的空场景守卫在画板侧，这里是落盘侧的兜底）；
  * - best-effort：任何一步失败只记日志，备份坏了不能把用户的保存带崩。
  */
-export async function writeBackup(dataPath: string): Promise<void> {
+export async function writeBackup(dataPath: string, currentText?: string): Promise<void> {
   try {
     const target = toDataPath(dataPath);
-    const text = await getFileText(target);
+    const text = currentText ?? (await getFileText(target));
     if (!hasNonEmptyScene(text)) return;
+    // 槽 1 已经是这一版就跳过：同一内容重复入链会把三档恢复点压成一份，
+    // 更早的好版本反而被挤掉（保存链路读回比对失败时的兜底）。
+    try {
+      if ((await getFileText(backupPathOf(target, 1))) === text) return;
+    } catch {
+      // 槽 1 还不存在，正常往下滚
+    }
     // 从旧往新挪（先 2→3 再 1→2），挪砸了顶多多一份重复，不会丢最新备份
     for (let slot = BACKUP_KEEP - 1; slot >= 1; slot--) {
       try {

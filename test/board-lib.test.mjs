@@ -32,6 +32,7 @@ const INDEX = stripComments(read("src/index.ts"));
 const DOCK = stripComments(read("src/siyuan/ExcaliDock.ts"));
 const DOC = stripComments(read("src/siyuan/doc.ts"));
 const TAB = stripComments(read("src/studio/tab.tsx"));
+const IO = stripComments(read("src/kernel/io.ts"));
 
 /* ------------------------------ 行为：纯函数 ------------------------------ */
 
@@ -361,6 +362,15 @@ test("第十九轮：备份滚动三份的落盘侧纪律在 storage.ts", () => 
   assert.match(STORAGE, /await putSvg\(backupPathOf\(target, 1\), text\);|putSvg\(backupPathOf\(target, 1\), text\)/, "新档永远落槽 1");
   assert.match(STORAGE, /!isBackupPath\(r\.name\)/, "白板库列表排除备份档");
   assert.match(STORAGE, /for \(let slot = 1; slot <= BACKUP_KEEP; slot\+\+\)/, "重命名把备份链整排搬走");
+});
+
+test("保存去重：同内容不落盘、不挤占备份链（前端 + 内核同口径）", () => {
+  const STORAGE = stripComments(read("src/studio/storage.ts"));
+  assert.match(STORAGE, /getFileText\(backupPathOf\(target, 1\)\)\) === text\) return;/, "槽 1 已是这一版就跳过");
+  assert.match(INDEX, /if \(current === svgText\) return \{ path: currentPath \};/, "自动保存导出确定性：同内容直接返回");
+  assert.match(INDEX, /writeBackup\(target, current \?\? undefined\)/, "读回的旧正文直接喂给备份，少一次读盘");
+  assert.match(IO, /if \(current === text\) return;/, "内核写盘同样跳过同内容");
+  assert.match(IO, /readText\(backupPathOf\(target, 1\)\)\) === text\) return;/, "内核备份链幂等");
 });
 
 test("第十九轮 D·重名避重：探重逻辑在 storage.ts，两条可输名的路径都走它", () => {

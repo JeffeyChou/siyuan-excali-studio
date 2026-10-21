@@ -12,7 +12,7 @@
  * i18n，settings.ts 才能在不牵动语言包的情况下用它做白名单归一。
  */
 
-import { ICON_BOARD_CARD, ICON_OUTLINE } from "./menu-icons.ts";
+import { ICON_BOARD_CARD, ICON_IMAGE_TO_MATERIAL, ICON_OUTLINE } from "./menu-icons.ts";
 
 /** 插入白板卡片：宿主弹白板选择器，在当前画布中心插一张可点开的卡片 */
 export const INSERT_BOARD_CARD = "insert-board-card";
@@ -20,8 +20,11 @@ export const INSERT_BOARD_CARD = "insert-board-card";
 /** 仅外框颜色（第四十五轮）：竖条上点开不占位色板，只改选中图形的边框色 */
 export const OUTLINE_COLOR = "outline-color";
 
+/** 图片转笔画素材（2026-10-21 P1）：选中的位图 → 一组可改色的原生 freedraw */
+export const IMAGE_TO_MATERIAL = "image-to-material";
+
 /** 动作 id：加新动作就是往这个联合里扩一项，同时在 RAIL_ACTIONS 里登记 */
-export type RailActionId = typeof INSERT_BOARD_CARD | typeof OUTLINE_COLOR;
+export type RailActionId = typeof INSERT_BOARD_CARD | typeof OUTLINE_COLOR | typeof IMAGE_TO_MATERIAL;
 
 export type RailActionMeta = {
   id: RailActionId;
@@ -45,6 +48,12 @@ export const RAIL_ACTIONS: RailActionMeta[] = [
     title: "仅外框颜色",
     desc: "只改选中图形的边框色，文字颜色保持不变",
     icon: ICON_OUTLINE,
+  },
+  {
+    id: IMAGE_TO_MATERIAL,
+    title: "图片转笔画素材",
+    desc: "把选中的图片描成可改色的原生笔画，可替换到画布或加入素材库",
+    icon: ICON_IMAGE_TO_MATERIAL,
   },
 ];
 

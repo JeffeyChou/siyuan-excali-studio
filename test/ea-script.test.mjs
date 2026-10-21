@@ -201,8 +201,54 @@ test("createEaApi 新出口：选中/包围盒/分组/置顶置底/移动/主题
   assert.deepEqual(out, { api: "block/getBlockKramdown", ok: 1 });
 });
 
-test("BUILTIN_SCRIPTS：16 个脚本全部可解析（H1+围栏），新脚本引用的 API 在 EaApi 面内", () => {
-  assert.equal(BUILTIN_SCRIPTS.length, 16);
+test("第四十轮：ea.addLibraryItem——脚本写素材库（此前无写库出口）", async () => {
+  const calls = [];
+  const handle = {
+    getElements: () => [],
+    getAppState: () => ({}),
+    addElements: () => [],
+    patchElements: () => undefined,
+    deleteElements: () => undefined,
+    clear: () => undefined,
+    selectElements: () => undefined,
+    updateScene: () => undefined,
+    scrollToContent: () => undefined,
+    scrollToElement: () => undefined,
+    setViewMode: () => undefined,
+    addImage: async () => "",
+    exportImage: async () => new Blob(),
+    connectObjects: () => null,
+    addEmbeddable: () => "",
+    getTheme: () => "light",
+    setTheme: () => undefined,
+    addLibraryItem: async (item) => {
+      calls.push(item);
+      // 忠实模拟真实句柄：无 id 时自动派生
+      const id = typeof item.id === "string" && item.id ? item.id : `lib-mock-${calls.length}`;
+      return id;
+    },
+  };
+  const host = {
+    getSettings: () => ({ saveDir: "" }),
+    siyuanCall: async () => null,
+    notify: () => undefined,
+  };
+  const ea = createEaApi(handle, host, "material-recipe.md");
+  const id = await ea.addLibraryItem({
+    id: "lib-x",
+    name: "配方素材",
+    elements: [{ id: "e1", type: "line" }],
+    excaliRecipe: { kind: "excali-outline", v: 1 },
+  });
+  assert.equal(id, "lib-x", "返回入库 id");
+  assert.equal(calls.length, 1, "只调一次");
+  assert.equal(calls[0].name, "配方素材");
+  // 配方随条目走（引擎 restoreLibraryItem 是 {...libraryItem, elements} ⇒ 存活）
+  assert.deepEqual(calls[0].excaliRecipe, { kind: "excali-outline", v: 1 });
+});
+
+test("BUILTIN_SCRIPTS：17 个脚本全部可解析（H1+围栏），新脚本引用的 API 在 EaApi 面内", () => {
+  assert.equal(BUILTIN_SCRIPTS.length, 17);
   // 第三十四轮（字体补丁方案）：apply-font-* 六件套已废弃——fontFamily 是数字枚举，
   // 写字符串走不通；六款字体改由构建期 vendor 注册表补丁注入（见 scripts/excalidraw-fonts-patch.mjs）
   assert.ok(!BUILTIN_SCRIPTS.some((x) => x.file.startsWith("apply-font-")), "apply-font-* 已废弃，不应再出现在内置脚本");
@@ -211,6 +257,7 @@ test("BUILTIN_SCRIPTS：16 个脚本全部可解析（H1+围栏），新脚本�
   assert.ok(files.includes("repeat-tween.md"), "重复补间（第三十四轮：EaUtils.inputPrompt 首个消费者）");
   assert.ok(files.includes("text-numbering.md"), "文字编号（按选择顺序；与 number-badges 徽标互不替代）");
   assert.ok(files.includes("highlighter.md"), "第三十八轮：荧光笔（可固定到侧边栏当功能扩展）");
+  assert.ok(files.includes("material-recipe.md"), "第四十轮：素材配方（改色/改参数/重新生成）");
   for (const name of ["box-selection", "uniform-size", "reverse-arrows", "change-shape"]) {
     assert.ok(files.includes(name + ".md"), "缺内置脚本：" + name);
   }

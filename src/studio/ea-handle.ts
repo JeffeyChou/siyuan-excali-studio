@@ -184,5 +184,27 @@ export function createEaBoardHandle(api: ExcalidrawImperativeAPI, theme?: ThemeC
         roughness: Number(s.currentItemRoughness ?? 1),
       };
     },
+    /* 第四十轮：脚本写素材库。
+       走 vendor 的 updateLibrary（merge 语义与手工「加入素材库」一致），
+       插件侧 host.saveLibraryItems 会在库变更回调里把条目落盘到 excali-libraries/。
+       脚本只管给 { elements, name? , excaliRecipe? }，id/status/created 这里补齐。 */
+    addLibraryItem: async (item, openLibraryMenu = false) => {
+      const elements = Array.isArray(item.elements) ? (item.elements as Record<string, unknown>[]) : [];
+      if (elements.length === 0) throw new Error("empty-library-item");
+      const now = Date.now();
+      const next = {
+        status: "unpublished",
+        created: now,
+        ...item,
+        id: typeof item.id === "string" && item.id ? item.id : `lib-ea-${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        elements,
+      };
+      await api.updateLibrary({
+        libraryItems: [next] as never,
+        merge: true,
+        openLibraryMenu,
+      });
+      return String(next.id);
+    },
   };
 }

@@ -5,7 +5,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { backupChainOf, backupPathOf, isBackupPath, joinSavePath, sanitizeFileName, stampFileName, uniqueTargetPath } from "../src/studio/storage.ts";
+import { backupChainOf, backupPathOf, isBackupPath, joinSavePath, sanitizeFileName, stampFileName, uniqueTargetPath, writeBackup } from "../src/studio/storage.ts";
+import { encodeSvgPayload } from "../src/studio/scene-codec.ts";
 
 test("sanitizeFileName：补 .svg、剥路径、去危险字符", () => {
   assert.equal(sanitizeFileName("我的白板"), "我的白板.svg");
@@ -75,6 +76,60 @@ test("uniqueTargetPath：撞名滚 _0/_1，改名撞自己不算撞（第十九�
     // 撞了别的板 → 那个名字自己的 _0 档；.bak 不在探测名单里，不占位
     existing.add("/data/assets/甲.svg");
     assert.equal(await uniqueTargetPath("assets", "甲.svg", "/data/assets/会议白板_1.svg"), "/data/assets/甲_0.svg");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("writeBackup：同一版内容不重复入链，真改动仍滚三档", async () => {
+  const scene = (n) =>
+    `<svg>${encodeSvgPayload({
+      elements: [{ id: `e${n}`, type: "rectangle", x: n, width: 10, height: 10 }],
+      appState: {},
+      files: {},
+    })}</svg>`;
+  const v1 = scene(1);
+  const v2 = scene(2);
+  const v3 = scene(3);
+  const files = new Map();
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (url === "/api/file/getFile") {
+      const { path } = JSON.parse(opts.body);
+      if (!files.has(path)) {
+        return { ok: true, status: 200, headers: { get: () => "application/json" }, text: async () => JSON.stringify({ code: -1, msg: "File does not exist" }) };
+      }
+      return { ok: true, status: 200, headers: { get: () => "image/svg+xml" }, text: async () => files.get(path) };
+    }
+    if (url === "/api/file/putFile") {
+      const path = opts.body.get("path");
+      files.set(path, await opts.body.get("file").text());
+      return { ok: true, status: 200, json: async () => ({ code: 0 }) };
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  try {
+    const target = "/data/assets/a.svg";
+    files.set(target, v1);
+    await writeBackup(target);
+    assert.equal(files.get(backupPathOf(target, 1)), v1, "首版进槽 1");
+
+    files.set(target, v2);
+    await writeBackup(target);
+    assert.equal(files.get(backupPathOf(target, 1)), v2);
+    assert.equal(files.get(backupPathOf(target, 2)), v1);
+
+    // 同内容再存：槽位不动，旧版不能被挤掉
+    await writeBackup(target);
+    assert.equal(files.get(backupPathOf(target, 1)), v2);
+    assert.equal(files.get(backupPathOf(target, 2)), v1);
+    assert.equal(files.get(backupPathOf(target, 3)), undefined, "空槽不被复制出伪历史");
+
+    files.set(target, v3);
+    await writeBackup(target);
+    assert.equal(files.get(backupPathOf(target, 1)), v3);
+    assert.equal(files.get(backupPathOf(target, 2)), v2);
+    assert.equal(files.get(backupPathOf(target, 3)), v1, "真改动照常滚到三档");
   } finally {
     globalThis.fetch = realFetch;
   }

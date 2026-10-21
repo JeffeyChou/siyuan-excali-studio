@@ -105,7 +105,7 @@ test("画布：只对筛选出的目标打 strokeColor 补丁（可撤销），�
 });
 
 test("宿主：脚本库行 → 活动画布开色板；无画布时提示", () => {
-  assert.match(INDEX, /import \{ INSERT_BOARD_CARD, OUTLINE_COLOR, RAIL_ACTIONS/, "宿主认识这个动作");
+  assert.match(INDEX, /import \{[^}]*\bOUTLINE_COLOR\b[^}]*RAIL_ACTIONS/, "宿主认识这个动作");
   assert.match(INDEX, /if \(id === OUTLINE_COLOR\) \{[\s\S]{0,160}this\.activeActions\(\)/, "先找活动画布");
   assert.match(INDEX, /actions\.openOutlinePalette\(\)/, "开色板走窄接口");
   assert.match(INDEX, /showMessage\(t\("先打开一块白板，再改外框颜色"\)\)/, "没有画布不装死");

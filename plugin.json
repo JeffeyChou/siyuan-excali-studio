@@ -2,7 +2,7 @@
   "name": "siyuan-excali-studio",
   "author": "LongDarkroom",
   "url": "https://github.com/LongDarkroom/siyuan-excali-studio",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "minAppVersion": "3.8.0",
   "backends": ["all"],
   "frontends": ["desktop", "mobile", "browser-desktop", "browser-mobile"],

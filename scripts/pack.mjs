@@ -13,7 +13,22 @@ import { fileURLToPath } from "node:url";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = "package.zip";
 
-const FILES = ["plugin.json", "index.js", "index.css", "engine.js", "kernel.js", "icon.png", "preview.png", "README.md"];
+// library-import.html + lib-import.js：素材库「Add to Excalidraw」落地页（v0.1.0 漏包，
+// 集市用户点库站 Add 会 404——src/index.ts 的 libraryImportUrl() 指向
+// /plugins/<dir>/library-import.html）。CHANGELOG.md 让本地安装的用户也看得到更新内容。
+const FILES = [
+  "plugin.json",
+  "index.js",
+  "index.css",
+  "engine.js",
+  "kernel.js",
+  "icon.png",
+  "preview.png",
+  "README.md",
+  "CHANGELOG.md",
+  "library-import.html",
+  "lib-import.js",
+];
 // embed/：画布内嵌思源块的 Embeddable 渲染页（copy-dist 从 src-embed/siyuan/ 拷来）
 // demo/：AI 绘图效果图（README 效果展示引用；集市渲染 README 相对路径需同包）
 const DIRS = ["i18n", "fonts", "embed", "demo"];
@@ -21,7 +36,7 @@ const DIRS = ["i18n", "fonts", "embed", "demo"];
 let failed = false;
 for (const f of FILES) {
   if (!existsSync(join(ROOT, f))) {
-    const built = f.startsWith("index.") || f === "engine.js" || f === "kernel.js";
+    const built = f.startsWith("index.") || f === "engine.js" || f === "kernel.js" || f === "lib-import.js";
     console.error(`[pack] 缺 ${f}${built ? "：先跑 npm run build" : ""}`);
     failed = true;
   }

@@ -49,6 +49,11 @@ export interface EaBoardHandle {
   applyPen: (pen: PenStyle, tool?: "freedraw" | "selection") => void;
   /** 第三十八轮：读当前笔刷（tool = activeTool.type + 描边四键） */
   getPen: () => PenSnapshot;
+  /**
+   * 第四十轮：写素材库条目（脚本写库的唯一出口）。
+   * openLibraryMenu=false 时静默入库（脚本批量生成素材时不该每条都弹面板）。
+   */
+  addLibraryItem: (item: Record<string, unknown>, openLibraryMenu?: boolean) => Promise<string>;
 }
 
 /** P2v4：脚本运行选项（点击现场 → 宿主 → createEaApi 一路透传） */
@@ -195,6 +200,12 @@ export interface EaApi {
   wrapText: (text: string, maxWidth: number, fontSize?: number) => string[];
   /** 嵌入元素（思源块渲染页链接 / 普通网页），返回元素 id */
   addEmbeddable: (link: string, at: { x: number; y: number; width?: number; height?: number }) => string;
+  /**
+   * 第四十轮：写素材库条目，返回条目 id。
+   * 此前脚本只能改画布、不能写库——「生成一张可复用素材」这类脚本缺最后一环。
+   * 条目级自定义字段（如 excaliRecipe 配方）随 vendor 的 restoreLibraryItem 双向存活。
+   */
+  addLibraryItem: (item: Record<string, unknown>) => Promise<string>;
   /** 画布明暗主题（脚本可读写；setTheme 只影响显示，不落盘） */
   getTheme: () => "light" | "dark";
   setTheme: (mode: "light" | "dark") => void;
@@ -353,6 +364,8 @@ export function createEaApi(handle: EaBoardHandle, host: EaHost, scriptName = ""
     wrapText: (text, maxWidth, fontSize = 20) => wrapTextByWidth(text, maxWidth, fontSize),
 
     addEmbeddable: (link, at) => handle.addEmbeddable(link, at),
+    /* 第四十轮：脚本写库。默认静默入库（批量生成素材时不该每条弹一次面板） */
+    addLibraryItem: (item) => handle.addLibraryItem(item),
 
     getTheme: () => handle.getTheme(),
     setTheme: (mode) => handle.setTheme(mode),

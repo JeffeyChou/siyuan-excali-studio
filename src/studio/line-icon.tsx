@@ -3,7 +3,15 @@
  * 引导画面的菜单行与 ☰ 主菜单共用它，口径同顶栏图标（见 feedback 里的视觉验收标准）。
  */
 
-export function LineIcon({ d, size = 20 }: { d: string; size?: number }) {
+export function LineIcon({
+  d,
+  size = 20,
+  strokeWidth = 1.8,
+}: {
+  d: string;
+  size?: number;
+  strokeWidth?: number;
+}) {
   return (
     <svg
       width={size}
@@ -11,7 +19,7 @@ export function LineIcon({ d, size = 20 }: { d: string; size?: number }) {
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.8"
+      strokeWidth={strokeWidth}
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"

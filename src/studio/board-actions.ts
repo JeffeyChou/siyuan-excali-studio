@@ -33,4 +33,9 @@ export interface BoardActions {
    * 色板开在竖条旁（动作没固定时锚到竖条本身），选色由画布自己打 strokeColor 补丁。
    */
   openOutlinePalette: () => void;
+  /**
+   * 2026-10-21 P1：脚本库「图片转笔画素材」行 → 当前活动画布校验选区并弹转换框。
+   * 只在画布层能做（拿得到 scene / files / 预览导出器）。
+   */
+  openImageToMaterial: () => void;
 }

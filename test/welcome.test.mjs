@@ -93,7 +93,7 @@ test("菜单小图标：24 网格、线性，与顶栏图标同一口径", () =>
     }
   }
   assert.match(WELCOME_TSX, /import \{ LineIcon \} from "\.\/line-icon"/, "图标渲染器与 ☰ 菜单共用一个，口径才不会分叉");
-  assert.match(LINE_ICON, /strokeWidth="1\.8"/, "16px 档图标统一 stroke 1.8");
+  assert.match(LINE_ICON, /strokeWidth = 1\.8/, "16px 档图标默认 stroke 1.8（底栏等特例可显式传 2）");
   assert.match(LINE_ICON, /stroke="currentColor"/, "线条吃 currentColor 才能跟主题");
   assert.match(LINE_ICON, /viewBox="0 0 24 24"/, "统一 24 网格");
 });

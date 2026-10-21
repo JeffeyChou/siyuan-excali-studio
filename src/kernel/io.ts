@@ -153,11 +153,17 @@ export async function removeFile(dataPath: string): Promise<void> {
  * 入链门与前端一致（只收能解出非空 scene 的旧版）；任何一步失败只记日志，
  * 不能把调用方的保存带崩。
  */
-export async function writeBackup(dataPath: string): Promise<void> {
+export async function writeBackup(dataPath: string, currentText?: string): Promise<void> {
   try {
     const target = toDataPath(dataPath);
-    const text = await readText(target);
+    const text = currentText ?? (await readText(target));
     if (!hasNonEmptyScene(text)) return;
+    // 同一版重复入链会把三档恢复点压成一份（与前端 storage.writeBackup 同口径）
+    try {
+      if ((await readText(backupPathOf(target, 1))) === text) return;
+    } catch {
+      // 槽 1 还不存在
+    }
     for (let slot = BACKUP_KEEP - 1; slot >= 1; slot--) {
       try {
         const older = await readText(backupPathOf(target, slot));
@@ -172,10 +178,18 @@ export async function writeBackup(dataPath: string): Promise<void> {
   }
 }
 
-/** 写 SVG：存在且开启备份时先滚动一份，再覆盖目标 */
+/** 写 SVG：内容有变才覆盖（覆盖前按设置滚动备份） */
 export async function writeSvg(relPath: string, text: string, keepBackup: boolean): Promise<void> {
   const target = toDataPath(relPath);
-  if (keepBackup && (await fileExists(target))) await writeBackup(target);
+  let current: string | null = null;
+  try {
+    current = await readText(target);
+  } catch {
+    // 文件还不存在，直接新建
+  }
+  // 导出是确定性的：同内容再写一遍只会刷 mtime、并挤掉备份链里的旧版本
+  if (current === text) return;
+  if (keepBackup && current !== null) await writeBackup(target, current);
   await writeText(target, text, "image/svg+xml");
 }
 

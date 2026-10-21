@@ -94,7 +94,7 @@ import { installBuiltinScripts, listScripts, outdatedBuiltinScripts, readScript,
 import { runScriptCode } from "./siyuan/script-runner";
 import { createEaApi, type EaApi, type EaHost, type ScriptRunOpts } from "./studio/ea-api";
 import { ICON_PIN, ICON_SCRIPT_GEAR, SCRIPT_ICONS } from "./studio/menu-icons";
-import { INSERT_BOARD_CARD, OUTLINE_COLOR, RAIL_ACTIONS, isRailActionId, type RailActionId, type RailActionMeta } from "./studio/rail-actions";
+import { IMAGE_TO_MATERIAL, INSERT_BOARD_CARD, OUTLINE_COLOR, RAIL_ACTIONS, isRailActionId, type RailActionId, type RailActionMeta } from "./studio/rail-actions";
 import type { ChannelId } from "./studio/ai/channels";
 import { boundingBoxOf, nextId } from "./studio/ea-element";
 import { renderPlan } from "./studio/ai/render";
@@ -1527,6 +1527,15 @@ export default class ExcaliStudioPlugin extends Plugin {
       actions.openOutlinePalette();
       return;
     }
+    if (id === IMAGE_TO_MATERIAL) {
+      const actions = this.activeActions();
+      if (!actions) {
+        showMessage(t("先打开一块白板，再转换图片"));
+        return;
+      }
+      actions.openImageToMaterial();
+      return;
+    }
     if (id !== INSERT_BOARD_CARD) return;
     const actions = this.activeActions();
     if (!actions) {
@@ -2388,7 +2397,16 @@ export default class ExcaliStudioPlugin extends Plugin {
   private async saveSvg(svgText: string, currentPath: string | null): Promise<{ path: string }> {
     if (!currentPath) throw new Error("saveSvg 只接受已有文件（新建走 createBoardFile）");
     const target = toDataPath(currentPath);
-    if (this.settings.keepBackup) await writeBackup(target);
+    // 导出是确定性的：内容没变时再写一遍只会刷新 mtime、并把同一版滚进备份链，
+    // 三档恢复点会退化成一份。读回比对失败（文件刚被外部删/改）时不拦截。
+    let current: string | null = null;
+    try {
+      current = await getFileText(target);
+    } catch {
+      // 读不到就照常覆盖，后面的 putSvg 会给出真正的错误
+    }
+    if (current === svgText) return { path: currentPath };
+    if (this.settings.keepBackup) await writeBackup(target, current ?? undefined);
     const saved = await putSvg(target, svgText);
     refreshAssetImages(saved);
     this.rememberRecent(saved);
