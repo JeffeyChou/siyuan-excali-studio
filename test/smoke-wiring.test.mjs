@@ -352,6 +352,7 @@ test("契约·第二十六轮：分包加载 / 图片外置接线 / 嵌入图点
   assert.match(INDEX, /loadEngineModule\(\): Promise/, "vendor 引擎经 engine.js 单文件懒加载（HTTP fetch + eval 包装）");
   assert.match(INDEX, /anonymous\(require, module, exports\)/, "与思源 loader.ts 同款包装，引擎内 require(siyuan) 才能解析");
   assert.match(INDEX, /this\.lazyEngine \?\?= this\.loadEngineModule\(\)/, "并发首开只装载一次");
+  assert.match(INDEX, /fetch\(url, \{ cache: "no-cache" \}\)/, "engine.js 每次校验新鲜度：插件更新后网页端不再用浏览器缓存里的旧引擎");
   const staticVendorImports = INDEX.replace(/import type[^;]+;/g, "").match(/from "\.\/studio\/(svg|scene|tab)"|attachStudioTab,/);
   assert.equal(staticVendorImports, null, "vendor 模块不许静态 import 进主包（只有 import type）");
   assert.match(BUILD_SCRIPT, /inlineDynamicImports: true/, "两趟构建都内联 vendor 内部动态导入（不炸哈希 chunk）");

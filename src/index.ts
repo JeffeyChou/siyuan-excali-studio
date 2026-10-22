@@ -192,7 +192,9 @@ export default class ExcaliStudioPlugin extends Plugin {
    */
   private async loadEngineModule(): Promise<typeof import("./studio/lazy")> {
     const url = new URL(`plugins/${PLUGIN_WEB_DIR}/engine.js`, `${location.origin}/`).href;
-    const res = await fetch(url);
+    // 思源给插件文件只回 Last-Modified、不带 Cache-Control，浏览器会按启发式缓存几个小时；
+    // 插件更新后网页端仍拿旧 engine.js。no-cache = 每次带 If-Modified-Since 校验，未变只回 304。
+    const res = await fetch(url, { cache: "no-cache" });
     if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
     const code = await res.text();
     const moduleObj = { exports: {} as typeof import("./studio/lazy") };
