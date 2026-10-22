@@ -67,7 +67,9 @@ node "$CLI" append --workspace "$WS" --board "已有白板标题" --plan /tmp/pl
   - `id`：连边用，省略自动 `n1/n2…`。
   - `label`：必填，显示文字；`note` 会换行附在下面。
   - `shape`：`rounded`（默认）/`rectangle`/`ellipse`/`diamond`（判断）/`text`（裸文字）。
-  - `group`：同组节点共用一种底色（marker 预设下明显）。
+  - `group`：同组节点共用一种底色（marker 预设下明显）；再在顶层 `groups` 里给它起名，就会画框（见下）。
+  - `rank`（可选，lr/tb）：把节点钉在第几层，0 起。自动分层不合意时用。
+  - `order`（可选）：层内先后，与位次比较，`0` = 排最前；grid 里是第几格，radial 里是环上的先后。
 - `edges` 可写 `"a->b"`、`["a","b","标签"]` 或 `{from,to,label}`；端点可写节点 `id` 或**完全相同的标签**。
 - 布局：`lr` 从左到右（流程默认）、`tb` 从上到下（层级）、`grid` 方阵（并列项）、`radial` 中心放射（脑图）。
 - 预设：
@@ -75,6 +77,23 @@ node "$CLI" append --workspace "$WS" --board "已有白板标题" --plan /tmp/pl
   - `marker`：彩色马克笔底色循环，适合头脑风暴/教学。
   - `blueprint`：蓝线技术图 + 等宽字，适合系统/接口。
   - 想固定自己的风格，写风格包（见下节），`preset` 直接填包名。
+- `groups`（可选）：`{ "组名": "框标题" }`（或 `[{ "id", "label" }]`），组名对应节点的 `group`。列出来的组在成员外画一个带标题的虚线框，同组节点在层内挨着放。框是量出来的、不会推开别的节点：如果成员不在相邻的层或位置，框会包住非成员，这时 `warnings` 会点名，用 `rank`/`order` 让成员挨在一起再画。
+
+```json
+{
+  "layout": "tb",
+  "groups": { "client": "客户端", "server": "服务器" },
+  "nodes": [
+    { "id": "web", "label": "浏览器", "group": "client" },
+    { "id": "gw", "label": "网关", "shape": "diamond" },
+    { "id": "api", "label": "API", "group": "server", "rank": 2, "order": 0 },
+    { "id": "db", "label": "数据库", "group": "server", "rank": 2 }
+  ],
+  "edges": ["web->gw", "gw->api", "api->db"]
+}
+```
+
+- 提示都只表达意图，不写坐标；写错的提示（比如 `rank` 不是整数）会被忽略并记进 `warnings`，不会让整张图失败。
 - 上限：40 节点 / 80 条边 / 单标签 200 字。超过请拆成多张白板；未知端点的边会被忽略并在 `warnings` 里返回。
 
 ## 固定风格（风格包）

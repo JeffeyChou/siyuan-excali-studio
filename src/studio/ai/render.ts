@@ -150,6 +150,43 @@ export function renderPlan(raw: unknown, opts: RenderOptions = {}): RenderedPlan
       ]
     : [];
 
+  // 分组框：透明底的虚线圆角框 + 左上角标题，排在节点前面（z 序在下）。
+  // 用普通矩形而不是 Excalidraw frame：frame 会裁剪并接管子元素，事后编辑很别扭。
+  const frameSpecs: ElementSpec[] = [];
+  for (const frame of layout.frames) {
+    const fid = `${prefix}-frame-${frame.id.replace(/[^\w.-]+/g, "_")}`;
+    frameSpecs.push({
+      type: "rectangle",
+      id: fid,
+      x: left + frame.x,
+      y: top + frame.y,
+      width: frame.width,
+      height: frame.height,
+      strokeColor: preset.muted,
+      backgroundColor: "transparent",
+      fillStyle: "solid",
+      strokeWidth: 1,
+      strokeStyle: "dashed",
+      roughness: preset.roughness,
+      roundness: { type: 3 },
+      // 与成员同一个 Excalidraw 组：拖动整组时框跟着走
+      groupIds: [`${prefix}-group-${frame.id.replace(/[^\w.-]+/g, "_")}`],
+    });
+    frameSpecs.push(
+      textSpec(
+        `${fid}-label`,
+        frame.label,
+        left + frame.labelAt.x,
+        top + frame.labelAt.y,
+        preset.fontSizes.edge,
+        preset.fontFamily,
+        preset.muted,
+        "left",
+      ),
+    );
+    frameSpecs[frameSpecs.length - 1].groupIds = [`${prefix}-group-${frame.id.replace(/[^\w.-]+/g, "_")}`];
+  }
+
   const labelSpecs: ElementSpec[] = [];
   routes.forEach((route, i) => {
     if (!route.label || !route.labelAt) return;
@@ -182,7 +219,8 @@ export function renderPlan(raw: unknown, opts: RenderOptions = {}): RenderedPlan
       ]
     : [];
 
-  const specs = [...titleSpecs, ...nodeSpecs, ...labelSpecs, ...captionSpecs];
+  const specs = [...titleSpecs, ...frameSpecs, ...nodeSpecs, ...labelSpecs, ...captionSpecs];
+  plan.warnings.push(...layout.warnings);
   const bbox =
     boundingBoxOf(specs.map((s) => ({ x: s.x, y: s.y, width: s.width ?? 0, height: s.height ?? 0 }))) ?? {
       minX: 0,

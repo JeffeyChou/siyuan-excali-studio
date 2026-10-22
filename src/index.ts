@@ -1189,13 +1189,14 @@ export default class ExcaliStudioPlugin extends Plugin {
           properties: {
             plan: {
               type: "object",
-              description: t("绘图计划：{ title, caption, preset, layout, nodes: [{id,label,shape,group}], edges: [{from,to,label}] }"),
+              description: t("绘图计划：{ title, caption, preset, layout, groups, nodes: [{id,label,shape,group,rank,order}], edges: [{from,to,label}] }"),
               properties: {
                 title: { type: "string" },
                 caption: { type: "string" },
                 preset: { type: "string", description: t("pencil/marker/blueprint 或 data/assets/excali-styles 里的风格包名") },
                 layout: { type: "string", enum: ["lr", "tb", "grid", "radial"] },
-                nodes: { type: "array", items: { type: ["string", "object"] } },
+                groups: { type: ["object", "array"], description: t("要画框的分组：{ 组名: 框标题 }，组名对应 node.group；同组节点在层内挨着放，框包住非成员时会返回 warning") },
+                nodes: { type: "array", description: t("节点：字符串，或 {id,label,shape,group,rank,order}。rank = lr/tb 里钉在第几层（0 起）；order = 层内先后，与位次比较（0 = 最前；grid 里是格子、radial 里是环上）。都可省略"), items: { type: ["string", "object"] } },
                 edges: { type: "array", items: { type: ["string", "object", "array"] } },
               },
               required: ["nodes"],

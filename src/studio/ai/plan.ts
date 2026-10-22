@@ -5,6 +5,11 @@
  * 归一化后给出稳定形状（DrawingPlan），布局与渲染只认归一化结果。
  * 结构错误抛 PlanError（带 reason，CLI/智能体可据此改计划）；可局部修复的问题
  * （未知端点的边、自环、重复边）记进 warnings 后丢弃，不整单失败。
+ *
+ * 第六十轮：可选的布局提示，全都不写时行为与以前完全一样。模型仍然不写坐标，只写意图：
+ * - `node.rank`：lr/tb 里钉在第几层（0 起）
+ * - `node.order`：层内（grid 里是格子、radial 里是环上）的先后，与位次比较，0 = 最前
+ * - `groups`：给 `node.group` 起显示名；列出的组画一个带标题的虚线框，同组节点在层内挨着放
  */
 
 import { normalizePresetName, styleNames } from "./preset.ts";
@@ -17,6 +22,16 @@ export interface PlanNode {
   label: string;
   shape: PlanShape;
   group?: string;
+  /** lr/tb：钉在第几层（0 起）；其他布局忽略 */
+  rank?: number;
+  /** 层内/格内/环上的先后，与位次比较（0 = 最前） */
+  order?: number;
+}
+
+/** 画框的分组：`id` 对应 `node.group`，`label` 是框上的标题 */
+export interface PlanGroup {
+  id: string;
+  label: string;
 }
 
 export interface PlanEdge {
@@ -33,6 +48,8 @@ export interface DrawingPlan {
   layout: PlanLayout;
   nodes: PlanNode[];
   edges: PlanEdge[];
+  /** 要画框的分组（只含至少有一个成员的组） */
+  groups: PlanGroup[];
   /** 归一化时丢弃/修复的内容（CLI 与智能体原样回传） */
   warnings: string[];
 }
@@ -67,6 +84,9 @@ export const PLAN_LIMITS = {
   maxTitle: 120,
   maxCaption: 300,
   maxEdgeLabel: 60,
+  maxGroups: 12,
+  maxGroupLabel: 60,
+  maxRank: 39,
 } as const;
 
 export interface NormalizeOptions {
@@ -150,6 +170,8 @@ function parseNodes(rawNodes: unknown[], warnings: string[]): PlanNode[] {
     let label = "";
     let shapeRaw = "";
     let group = "";
+    let rankRaw: unknown;
+    let orderRaw: unknown;
     if (typeof raw === "string") {
       label = raw;
     } else if (isRecord(raw)) {
@@ -157,6 +179,8 @@ function parseNodes(rawNodes: unknown[], warnings: string[]): PlanNode[] {
       label = str(raw.label ?? raw.text ?? raw.title);
       shapeRaw = str(raw.shape);
       group = str(raw.group);
+      rankRaw = raw.rank ?? raw.layer;
+      orderRaw = raw.order;
       const note = str(raw.note ?? raw.description);
       if (note) label = label ? `${label}\n${note}` : note;
     } else {
@@ -175,9 +199,77 @@ function parseNodes(rawNodes: unknown[], warnings: string[]): PlanNode[] {
     id = normalizeId(id) || `n${i + 1}`;
     if (seen.has(id)) throw new PlanError("duplicate-node-id", id);
     seen.add(id);
-    nodes.push({ id, label, shape, ...(group.trim() ? { group: clip(group, 40) } : {}) });
+    const rank = intHint(rankRaw, 0, PLAN_LIMITS.maxRank, `nodes[${i}].rank`, warnings);
+    const order = numHint(orderRaw, `nodes[${i}].order`, warnings);
+    nodes.push({
+      id,
+      label,
+      shape,
+      ...(group.trim() ? { group: clip(group, 40) } : {}),
+      ...(rank !== undefined ? { rank } : {}),
+      ...(order !== undefined ? { order } : {}),
+    });
   }
   return nodes;
+}
+
+/** 可选整数提示：缺省 = undefined；写错不整单失败，记 warning 后当没写 */
+function intHint(raw: unknown, min: number, max: number, where: string, warnings: string[]): number | undefined {
+  if (raw === undefined || raw === null || raw === "") return undefined;
+  const n = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isInteger(n) || n < min || n > max) {
+    warnings.push(`${where}=${str(raw) || typeof raw} 不是 ${min}–${max} 的整数，已忽略`);
+    return undefined;
+  }
+  return n;
+}
+
+function numHint(raw: unknown, where: string, warnings: string[]): number | undefined {
+  if (raw === undefined || raw === null || raw === "") return undefined;
+  const n = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(n)) {
+    warnings.push(`${where}=${str(raw) || typeof raw} 不是数字，已忽略`);
+    return undefined;
+  }
+  return n;
+}
+
+/**
+ * `groups` 可以写成 `{ "core": "服务器" }`，也可以写成 `[{ id, label }]`（`name` 同 `id`）。
+ * 没有成员的组记 warning 后丢弃；只写了 `node.group` 没列进来的组照旧只上底色、不画框。
+ */
+function parseGroups(raw: unknown, nodes: PlanNode[], warnings: string[]): PlanGroup[] {
+  if (raw === undefined || raw === null) return [];
+  const entries: Array<[string, string]> = [];
+  if (Array.isArray(raw)) {
+    raw.forEach((g, i) => {
+      if (typeof g === "string") entries.push([g, g]);
+      else if (isRecord(g)) entries.push([str(g.id ?? g.name), str(g.label ?? g.title ?? g.id ?? g.name)]);
+      else warnings.push(`groups[${i}] 不是字符串或对象，已忽略`);
+    });
+  } else if (isRecord(raw)) {
+    for (const [k, v] of Object.entries(raw)) entries.push([k, str(v) || k]);
+  } else {
+    warnings.push("groups 必须是对象或数组，已忽略");
+    return [];
+  }
+  const used = new Set(nodes.map((n) => n.group).filter(Boolean));
+  const out: PlanGroup[] = [];
+  for (const [rawId, rawLabel] of entries) {
+    const id = clip(rawId, 40);
+    if (!id) continue;
+    if (!used.has(id)) {
+      warnings.push(`groups 里的「${id}」没有任何节点使用（node.group），已忽略`);
+      continue;
+    }
+    if (out.some((g) => g.id === id)) continue;
+    if (out.length >= PLAN_LIMITS.maxGroups) {
+      warnings.push(`groups 超过 ${PLAN_LIMITS.maxGroups} 个，其余不画框`);
+      break;
+    }
+    out.push({ id, label: clip(rawLabel || id, PLAN_LIMITS.maxGroupLabel) });
+  }
+  return out;
 }
 
 /** 端点解析：先按 id，再按 label（不区分大小写），便于模型用中文名直接连边 */
@@ -284,6 +376,10 @@ export function normalizePlan(raw: unknown, opts: NormalizeOptions = {}): Drawin
   const titleSource = opts.title !== undefined && opts.title !== "" ? opts.title : raw.title;
   const title = clip(str(titleSource), PLAN_LIMITS.maxTitle) || undefined;
   const caption = clip(str(raw.caption), PLAN_LIMITS.maxCaption) || undefined;
+  const groups = parseGroups(raw.groups, nodes, warnings);
+  if ((layout === "grid" || layout === "radial") && nodes.some((n) => n.rank !== undefined)) {
+    warnings.push(`rank 只对 lr/tb 生效，${layout} 布局下已忽略`);
+  }
 
   return {
     ...(title ? { title } : {}),
@@ -292,6 +388,7 @@ export function normalizePlan(raw: unknown, opts: NormalizeOptions = {}): Drawin
     layout,
     nodes,
     edges,
+    groups,
     warnings,
   };
 }
