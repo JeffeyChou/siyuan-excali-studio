@@ -16,7 +16,7 @@ import { STYLE_DIR, listStyles, loadStylePacks, type StyleLoadResult } from "../
 import { generateImage } from "../studio/ai/imagegen.ts";
 import { decodeSvgPayload } from "../studio/scene-codec.ts";
 import { DEDICATED_BOARD_DIR, normalizeDirRef, type StudioSettings } from "../studio/settings.ts";
-import { fileNameOf, isBackupPath, sanitizeFileName, toAssetRef, toDataPath } from "../studio/storage.ts";
+import { fileNameOf, isBackupPath, readDirTimeMs, sanitizeFileName, toAssetRef, toDataPath } from "../studio/storage.ts";
 import { createKernelProxy } from "./proxy.ts";
 import { fileExists, readBoardText, readDir, readText, writeSvg, type DirEntry } from "./io.ts";
 
@@ -67,7 +67,7 @@ async function listBoardEntries(dir: string): Promise<Array<{ path: string; upda
   }
   return rows
     .filter((r) => r && r.isDir !== true && typeof r.name === "string" && /\.svg$/i.test(r.name) && !isBackupPath(r.name))
-    .map((r) => ({ path: `${dir}/${r.name}`, updated: typeof r.updated === "number" ? r.updated : 0 }))
+    .map((r) => ({ path: `${dir}/${r.name}`, updated: readDirTimeMs(r.updated) }))
     .sort((a, b) => b.updated - a.updated);
 }
 

@@ -198,8 +198,17 @@ export type BoardFileEntry = { path: string; updated: number };
  * 列出目录下的白板候选（所有 .svg，修改时间新的在前）。
  * 读目录用 /api/file/readDir；只列不读内容，
  * 「是不是本插件的白板」交给打开时的解码判断。
- * updated 是内核给的毫秒时间戳（选文档框那种目录层级没有它，所以只能这么取）。
+ * updated 来自 readDir（选文档框那种目录层级没有它，所以只能这么取），经 readDirTimeMs 换成毫秒。
  */
+/**
+ * readDir 的 updated 是 Unix 秒（内核 ModTime().Unix()），当毫秒用会显示成 1970-01-21。
+ * 小于 1e12 的按秒换算；已是毫秒的原样返回，缺失给 0。
+ */
+export function readDirTimeMs(updated: unknown): number {
+  if (typeof updated !== "number" || !Number.isFinite(updated) || updated <= 0) return 0;
+  return updated < 1e12 ? updated * 1000 : updated;
+}
+
 export async function listBoardEntries(dir: string): Promise<BoardFileEntry[]> {
   const rel = dir.trim().replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
   const base = rel === "" ? "assets" : rel;
@@ -211,7 +220,7 @@ export async function listBoardEntries(dir: string): Promise<BoardFileEntry[]> {
     ? rows.filter((r) => r && r.isDir !== true && typeof r.name === "string" && /\.svg$/i.test(r.name) && !isBackupPath(r.name))
     : [];
   return files
-    .map((r) => ({ path: `${base}/${r.name as string}`, updated: typeof r.updated === "number" ? r.updated : 0 }))
+    .map((r) => ({ path: `${base}/${r.name as string}`, updated: readDirTimeMs(r.updated) }))
     .sort((a, b) => b.updated - a.updated);
 }
 

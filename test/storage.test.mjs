@@ -164,3 +164,29 @@ test("listFilesWithExt：ext 省略 = 列全部文件（脚本 listFiles 口径�
     globalThis.fetch = realFetch;
   }
 });
+
+test("readDirTimeMs：readDir 的 updated 是秒，换成毫秒（以前白板库显示 1970-01-21）", async () => {
+  const { readDirTimeMs } = await import("../src/studio/storage.ts");
+  assert.equal(readDirTimeMs(1792692124), 1792692124000, "秒 → 毫秒");
+  assert.equal(readDirTimeMs(1792692124000), 1792692124000, "已是毫秒原样返回");
+  assert.equal(readDirTimeMs(undefined), 0);
+  assert.equal(readDirTimeMs(0), 0);
+  assert.equal(readDirTimeMs(Number.NaN), 0);
+});
+
+test("listBoardEntries：readDir 给秒，列表拿到的是毫秒且新→旧", async () => {
+  const { listBoardEntries } = await import("../src/studio/storage.ts");
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ code: 0, data: [{ name: "old.svg", updated: 1700000000 }, { name: "new.svg", updated: 1792692124 }] }),
+  });
+  try {
+    const rows = await listBoardEntries("assets/excali");
+    assert.deepEqual(rows.map((r) => r.path), ["assets/excali/new.svg", "assets/excali/old.svg"]);
+    assert.equal(new Date(rows[0].updated).getUTCFullYear(), 2026);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

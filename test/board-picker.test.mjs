@@ -87,7 +87,7 @@ test("board-picker：已打开判定与行内 tooltip", () => {
 
 test("storage：listBoardEntries 带 updated 且新→旧；listBoardFiles 只做投影", () => {
   assert.match(STORAGE, /export type BoardFileEntry = \{ path: string; updated: number \}/);
-  assert.match(STORAGE, /updated: typeof r\.updated === "number" \? r\.updated : 0/, "内核没给时间回落 0，不能是 NaN");
+  assert.match(STORAGE, /updated: readDirTimeMs\(r\.updated\)/, "readDir 的秒换成毫秒，没给时间回落 0");
   assert.match(STORAGE, /\.sort\(\(a, b\) => b\.updated - a\.updated\)/, "修改时间新的在前");
   assert.match(
     STORAGE,
