@@ -43,6 +43,8 @@ function config(entry, outDir, fileName) {
     base: "./",
     define: {
       __EXCALI_PLUGIN_VERSION__: JSON.stringify(PLUGIN_VERSION),
+      // lib 模式不替换 process.env.NODE_ENV；浏览器端没有 process，React 入口会直接抛错
+      "process.env.NODE_ENV": JSON.stringify("production"),
     },
     build: {
       target: "esnext",
