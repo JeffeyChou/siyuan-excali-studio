@@ -178,3 +178,23 @@ test("上限规模（40 节点 / 80 边）四种布局都不穿节点", () => {
   }
   for (const layout of ["lr", "tb", "grid", "radial"]) assertNoCrossing(layoutPlan(normalizePlan({ layout, nodes, edges })));
 });
+
+test("上下对齐、有重叠的两个节点直连，不出小台阶", () => {
+  const { routes } = layoutPlan(normalizePlan(STACK));
+  const r = routes.find((x) => x.from === "siyuan" && x.to === "backup");
+  assert.equal(r.points.length, 2, "kernel → backup 应是一段直线");
+});
+
+test("菱形/椭圆的端点落在它的中线上（不悬在包围盒边上）", () => {
+  const plan = normalizePlan(STACK);
+  const { routes, nodes } = layoutPlan(plan);
+  const by = Object.fromEntries(nodes.map((n) => [n.id, n]));
+  for (const r of routes) {
+    for (const [id, side, p] of [[r.from, r.side1, r.p1], [r.to, r.side2, r.p2]]) {
+      const n = by[id];
+      if (n.shape !== "diamond" && n.shape !== "ellipse") continue;
+      if (side === "top" || side === "bottom") assert.ok(Math.abs(p.x - (n.x + n.width / 2)) < 0.5, `${r.from}→${r.to} 在 ${id} 上的端点偏离中线`);
+      else assert.ok(Math.abs(p.y - (n.y + n.height / 2)) < 0.5, `${r.from}→${r.to} 在 ${id} 上的端点偏离中线`);
+    }
+  }
+});

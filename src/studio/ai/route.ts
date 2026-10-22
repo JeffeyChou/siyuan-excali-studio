@@ -24,6 +24,8 @@ export interface RouteBox {
   y: number;
   width: number;
   height: number;
+  /** diamond/ellipse 只有中线碰得到边框；缺省按矩形 */
+  shape?: string;
 }
 
 export interface RouteOptions {
@@ -388,22 +390,42 @@ export function routeOrthogonal(
     }
   };
 
+  // 两个盒子在某个方向上有重叠区间时，先试一条穿过重叠区中点的直线：锚点不必在边的
+  // 正中，这样中心差十几像素的两个节点之间不会多出一个小台阶
+  const direct = straightThroughOverlap(a, b, grid, ports);
+  if (direct) {
+    record(direct, [], a, b, grid, ports, used);
+    return direct;
+  }
+
   const f1 = facingSides(a, b);
   const f2 = facingSides(b, a);
   tryPairs(f1.flatMap((s1) => f2.map((s2) => [s1, s2] as [Side, Side])));
   if (!bestRoute) tryPairs(SIDES.flatMap((s1) => SIDES.map((s2) => [s1, s2] as [Side, Side])));
   const route = bestRoute as OrthoRoute | null;
   if (!route) return null;
+  record(route, bestCells, a, b, grid, ports, used);
+  return route;
+}
 
-  // 记账：口的进出、网格边的占用、对外的线段
+/** 记账：口的进出、网格边的占用、对外的线段 */
+function record(
+  route: OrthoRoute,
+  cells: Array<[number, number]>,
+  a: RouteBox,
+  b: RouteBox,
+  grid: RouteGrid,
+  ports: PortUsage,
+  used: Segment[],
+): void {
   const outKey = `${a.id}:${route.side1}`;
   const inKey = `${b.id}:${route.side2}`;
   ports.set(outKey, { in: ports.get(outKey)?.in ?? 0, out: (ports.get(outKey)?.out ?? 0) + 1 });
   ports.set(inKey, { in: (ports.get(inKey)?.in ?? 0) + 1, out: ports.get(inKey)?.out ?? 0 });
   const W = grid.xs.length;
-  for (let k = 0; k + 1 < bestCells.length; k++) {
-    const [i1, j1] = bestCells[k];
-    const [i2, j2] = bestCells[k + 1];
+  for (let k = 0; k + 1 < cells.length; k++) {
+    const [i1, j1] = cells[k];
+    const [i2, j2] = cells[k + 1];
     if (j1 === j2) grid.hUse[j1 * W + Math.min(i1, i2)]++;
     else grid.vUse[Math.min(j1, j2) * W + i1]++;
   }
@@ -412,7 +434,49 @@ export function routeOrthogonal(
     const q = route.path[i + 1];
     used.push({ x1: p.x, y1: p.y, x2: q.x, y2: q.y });
   }
-  return route;
+}
+
+/**
+ * 上下（或左右）相对、且在另一轴上有可落线重叠的两个盒子：一条直线连过去。
+ * 线放在重叠区中点；路上碰到别的盒子、或会让一个口既进又出，就返回 null 交给 A*。
+ */
+function straightThroughOverlap(a: RouteBox, b: RouteBox, grid: RouteGrid, ports: PortUsage): OrthoRoute | null {
+  const m = grid.margin;
+  // 每个盒子在某条轴上「线能垂直落上去」的区间：矩形避开两端圆角各 12px；
+  // 菱形和椭圆只有中线那一点真的碰到外框
+  const span = (box: RouteBox, axis: "x" | "y"): [number, number] => {
+    const start = axis === "x" ? box.x : box.y;
+    const size = axis === "x" ? box.width : box.height;
+    if (box.shape === "diamond" || box.shape === "ellipse") return [start + size / 2, start + size / 2];
+    return [start + 12, start + size - 12];
+  };
+  const candidates: OrthoRoute[] = [];
+  const [ax0, ax1] = span(a, "x");
+  const [bx0, bx1] = span(b, "x");
+  const ox0 = Math.max(ax0, bx0);
+  const ox1 = Math.min(ax1, bx1);
+  if (ox1 >= ox0) {
+    const x = (ox0 + ox1) / 2;
+    if (a.y + a.height + 2 * m <= b.y) candidates.push({ side1: "bottom", side2: "top", path: [{ x, y: a.y + a.height }, { x, y: b.y }] });
+    else if (b.y + b.height + 2 * m <= a.y) candidates.push({ side1: "top", side2: "bottom", path: [{ x, y: a.y }, { x, y: b.y + b.height }] });
+  }
+  const [ay0, ay1] = span(a, "y");
+  const [by0, by1] = span(b, "y");
+  const oy0 = Math.max(ay0, by0);
+  const oy1 = Math.min(ay1, by1);
+  if (oy1 >= oy0) {
+    const y = (oy0 + oy1) / 2;
+    if (a.x + a.width + 2 * m <= b.x) candidates.push({ side1: "right", side2: "left", path: [{ x: a.x + a.width, y }, { x: b.x, y }] });
+    else if (b.x + b.width + 2 * m <= a.x) candidates.push({ side1: "left", side2: "right", path: [{ x: a.x, y }, { x: b.x + b.width, y }] });
+  }
+  for (const c of candidates) {
+    const [p, q] = c.path;
+    const blocked = grid.boxes.some((o) => o !== a && o !== b && segmentHitsRect(p, q, rectOf(o, m / 2)));
+    if (blocked) continue;
+    if (ports.get(`${a.id}:${c.side1}`)?.in || ports.get(`${b.id}:${c.side2}`)?.out) continue;
+    return c;
+  }
+  return null;
 }
 
 /**
