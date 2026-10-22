@@ -288,24 +288,42 @@ export function nearestSide(from: { x: number; y: number; width: number; height:
   return dy >= 0 ? "bottom" : "top";
 }
 
-/** 按显示宽度把文本分行（中文按 1、英文按 0.56 个字宽计，超宽即换行） */
+/**
+ * 按显示宽度把文本分行（中文按 1、英文按 0.56 个字宽计，超宽即换行）。
+ *
+ * 换行点在词与词之间：中文每个字自成一段，非空白连写的一串算一个词（连同后面的
+ * 空格）。只有单个词本身就比一行宽时，才在词内逐字断开。以前一律逐字断，
+ * 「Excali tools」会断成「Excali t / ools」。行首行尾的空格不保留。
+ */
 export function wrapTextByWidth(text: string, maxWidth: number, fontSize: number): string[] {
+  const CJK = /[\u4e00-\u9fff\uff00-\uffef\u3000-\u303f]/;
+  const unit = (ch: string) => (CJK.test(ch) ? 1 : 0.56);
+  const widthOf = (str: string) => [...str].reduce((sum, ch) => sum + unit(ch), 0);
+  const limit = maxWidth / fontSize;
   const lines: string[] = [];
   for (const raw of text.split("\n")) {
+    const tokens = raw.match(/[\u4e00-\u9fff\uff00-\uffef\u3000-\u303f]|[^\s\u4e00-\u9fff\uff00-\uffef\u3000-\u303f]+\s*|\s+/g) ?? [];
     let line = "";
-    let width = 0;
-    for (const ch of raw) {
-      const w = /[\u4e00-\u9fff\uff00-\uffef\u3000-\u303f]/.test(ch) ? 1 : 0.56;
-      if (line !== "" && width + w > maxWidth / fontSize) {
-        lines.push(line);
-        line = ch;
-        width = w;
-      } else {
+    const flush = () => {
+      lines.push(line.replace(/\s+$/, ""));
+      line = "";
+    };
+    for (const token of tokens) {
+      if (line === "" && /^\s+$/.test(token)) continue;
+      const word = token.replace(/\s+$/, "");
+      if (line !== "" && widthOf(line.replace(/\s+$/, "")) + widthOf(word) > limit) flush();
+      if (widthOf(word) <= limit) {
+        line += token;
+        continue;
+      }
+      // 单词比一行还宽：只能逐字断
+      for (const ch of token) {
+        if (line === "" && /\s/.test(ch)) continue;
+        if (line !== "" && !/\s/.test(ch) && widthOf(line) + unit(ch) > limit) flush();
         line += ch;
-        width += w;
       }
     }
-    lines.push(line);
+    flush();
   }
   return lines;
 }
