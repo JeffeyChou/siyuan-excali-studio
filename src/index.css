@@ -13,6 +13,90 @@
   overflow: hidden;
 }
 
+/* 移动端（iPad / 手机）没有自定义页签：画板挂在宿主自建的全屏浮层里。
+   层级压在思源侧栏/顶栏之上、Dialog 之下（思源 Dialog 由 zIndex 计数器分配）。
+   安全区留给 iPad 状态栏与 Home 指示条；浮层打开时锁住底下的页面滚动。 */
+.exs-mobile-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  padding-top: env(safe-area-inset-top, 0px);
+  box-sizing: border-box;
+  background: var(--b3-theme-background, #fff);
+  overscroll-behavior: none;
+}
+
+body.exs-mobile-open {
+  overflow: hidden;
+}
+
+.exs-mobile-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  padding: 0 6px 0 14px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--b3-border-color, rgba(0, 0, 0, 0.1));
+  background: var(--b3-theme-background, #fff);
+  color: var(--b3-theme-on-background, #1f2328);
+}
+
+.exs-mobile-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* 脏点跟随标题，不占额外宽度 */
+.exs-mobile-header.exs-tab-dirty .exs-mobile-title::after {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--b3-theme-primary, #3575f0);
+  vertical-align: middle;
+}
+
+.exs-mobile-close {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--b3-theme-on-surface, #555);
+  font-size: 20px;
+  line-height: 1;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.exs-mobile-close:active {
+  background: var(--b3-theme-surface-lighter, rgba(0, 0, 0, 0.06));
+}
+
+.exs-mobile-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  box-sizing: border-box;
+}
+
 .exs-root {
   display: flex;
   flex-direction: column;
@@ -451,6 +535,37 @@
 
 .exs-script-rail__menu button:hover {
   background: var(--b3-theme-background-light, rgba(0, 0, 0, 0.05));
+}
+
+/* 2026-10-22：Obsidian 式悬浮提示（对标「嵌入文件 / Insert ANY file」）——深色药丸 + 双语。
+   挂在按钮左侧（竖条贴右缘，药丸往画布展开）；fixed 定位，z-index 9 压过画布 UI
+   （vendor sidebar 5）、低于思源 Dialog（≥11，竖条被让位时提示同步收，不会撞上）。
+   pointer-events:none——提示永不抢画布指针；translate(-100%,-50%) 让药丸右缘
+   贴近按钮左缘（style.left 已预留 10px 间距），窄画布时由 JS 实测宽度往内夹。 */
+.exs-rail-tip {
+  position: fixed;
+  z-index: 9;
+  transform: translate(-100%, -50%);
+  max-width: 62vw;
+  padding: 4px 9px;
+  border-radius: 6px;
+  background: rgba(24, 24, 27, 0.94);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
+  animation: exs-rail-tip-in 100ms ease;
+}
+
+@keyframes exs-rail-tip-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 /* ============ 第三十八轮：竖条里的荧光笔（一枚按钮 + 不占位色板） ============
@@ -1043,17 +1158,180 @@
   }
 }
 
-/* 命名对话框与文件列表（挂在思源 Dialog 内，用它的 b3 组件类） */
+/* 命名对话框（新建/重命名共用 promptFileName，挂在思源 Dialog 内）。
+   Apple UI 化：容器圆角 + 层叠阴影 + 素/实心主次按钮；「位置」行做成浅底信息条，
+   贴边根因是思源 content 内边距随主题浮动，这里对 content 显式给死。 */
+.exs-name-dialog .b3-dialog__container {
+  overflow: hidden;
+  border-radius: 12px;
+  box-shadow: 0 0 0 1px var(--b3-border-color, rgba(0, 0, 0, 0.1)), 0 2px 8px rgba(0, 0, 0, 0.08),
+    0 12px 40px rgba(0, 0, 0, 0.2);
+}
+.exs-name-dialog .b3-dialog__header {
+  padding: 16px 24px 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.exs-name-dialog .b3-dialog__content {
+  padding: 14px 24px 20px;
+}
+.exs-name-dialog .exs-name-input {
+  border-radius: 8px;
+  padding: 7px 11px;
+  font-size: 14px;
+}
 .exs-name-tip {
+  display: flex;
+  align-items: center;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--b3-theme-background-light, rgba(0, 0, 0, 0.04));
   font-size: 12px;
   color: var(--b3-theme-on-surface-light, #888);
-  margin-top: 6px;
+}
+.exs-name-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+.exs-name-dialog .exs-name-cancel {
+  padding: 5px 14px;
+  border: none;
+  border-radius: 8px;
+  box-shadow: none;
+  background: transparent;
+  color: var(--b3-theme-on-surface, #444);
+}
+.exs-name-dialog .exs-name-cancel:hover {
+  background: var(--b3-theme-background-light, rgba(0, 0, 0, 0.06));
+}
+.exs-name-dialog .exs-name-ok {
+  padding: 5px 18px;
+  border: none;
+  border-radius: 8px;
+  box-shadow: none;
+  background: var(--b3-theme-primary, #1a8fff);
+  color: #fff;
+}
+.exs-name-dialog .exs-name-ok:hover {
+  filter: brightness(0.94);
+}
+
+/* 第五十一轮：拓展功能面板（原「脚本库」）Apple UI 化——scope 挂 .exs-picker-dialog。
+   容器/标题/内容边距与命名对话框同口径；组题小字、行圆角、图标衬底统一。 */
+.exs-picker-dialog .b3-dialog__container {
+  overflow: hidden;
+  border-radius: 12px;
+  box-shadow: 0 0 0 1px var(--b3-border-color, rgba(0, 0, 0, 0.1)), 0 2px 8px rgba(0, 0, 0, 0.08),
+    0 12px 40px rgba(0, 0, 0, 0.2);
+}
+.exs-picker-dialog .b3-dialog__header {
+  padding: 16px 24px 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.exs-picker-dialog .b3-dialog__content {
+  padding: 14px 24px 20px;
+}
+.exs-picker-dialog .exs-picker {
+  gap: 10px;
+}
+.exs-picker-dialog .exs-picker__group {
+  margin: 4px 2px 0;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  opacity: 0.55;
+}
+.exs-picker-dialog .exs-board-list {
+  border-radius: 10px;
+  padding: 4px;
+}
+.exs-picker-dialog .exs-board-list .b3-list-item {
+  border-radius: 8px;
+}
+.exs-picker-dialog .exs-script-item__icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--b3-theme-background-light, rgba(0, 0, 0, 0.04));
+  align-items: center;
+  justify-content: center;
+  margin-right: 8px;
+  vertical-align: middle;
+  opacity: 1;
+}
+.exs-picker-dialog .exs-script-item__icon svg {
+  width: 14px;
+  height: 14px;
+}
+.exs-picker-dialog .exs-picker__hint {
+  border-radius: 8px;
+  opacity: 1;
+  color: var(--b3-theme-on-surface-light, #888);
 }
 /* .exs-board-list 是脚本选择器（openScriptPicker）的列表容器；旧的 .exs-board-item
    随「打开白板…」重写成 .exs-picker__item 一起删了（第十三轮）。 */
 .exs-board-list {
   max-height: 320px;
   overflow: auto;
+}
+
+/* 第五十二轮：版本更新弹窗——scope 挂 .exs-changelog-dialog，容器/标题/内容边距沿用
+   命名对话框口径（.b3-dialog__content 的内边距会随主题浮动，必须显式定死）。
+   日志正文自己滚动：整段 CHANGELOG 塞进去会把窗口撑到屏幕外。 */
+.exs-changelog-dialog .b3-dialog__container {
+  overflow: hidden;
+  border-radius: 12px;
+  box-shadow: 0 0 0 1px var(--b3-border-color, rgba(0, 0, 0, 0.1)), 0 2px 8px rgba(0, 0, 0, 0.08),
+    0 12px 40px rgba(0, 0, 0, 0.2);
+}
+.exs-changelog-dialog .b3-dialog__header {
+  padding: 16px 24px 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.exs-changelog-dialog .b3-dialog__content {
+  padding: 14px 24px 20px;
+}
+.exs-changelog-dialog .exs-changelog {
+  max-height: min(58vh, 540px);
+  overflow: auto;
+  padding-right: 6px;
+  font-size: 14px;
+  line-height: 1.7;
+}
+/* Lute 出来的是文档尺度标题，压到对话框尺度；段首那行「## v0.2.0（…）」就是本段的第一行 */
+.exs-changelog-dialog .exs-changelog h2 {
+  margin: 0 0 10px;
+  font-size: 15px;
+  line-height: 1.45;
+}
+.exs-changelog-dialog .exs-changelog h3 {
+  margin: 18px 0 6px;
+  font-size: 13px;
+  opacity: 0.72;
+}
+.exs-changelog-dialog .exs-changelog p {
+  margin: 0 0 8px;
+}
+.exs-changelog-dialog .exs-changelog ul,
+.exs-changelog-dialog .exs-changelog ol {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+.exs-changelog-dialog .exs-changelog li {
+  margin: 2px 0;
+}
+.exs-changelog-dialog .exs-changelog table {
+  font-size: 13px;
+}
+/* 没有 Lute 时的纯文本回落：不折成 HTML，保住换行即可 */
+.exs-changelog-dialog .exs-changelog__plain {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.65;
 }
 
 /* ============ 2026-10-16：提示气泡胶囊化（EA 样式复刻 S1） ============ */
@@ -2009,4 +2287,620 @@ body .excalidraw-tooltip.excalidraw-tooltip--visible {
   .exs-root .exs-zoom-reset {
     transition: none;
   }
+}
+
+/* 2026-10-22：文本折叠圆点控制钮（对标 Obsidian Canvas Folding 的 − 控制点）。
+   层铺满 .exs-canvas（已 relative），pointer-events 只开在按钮上——不挡画布。
+   锚点 = 折叠头文本左缘外「半径 + 6px」（屏幕像素，见 badgeAnchor）；
+   按钮以 transform 居中对齐锚点，并随画布缩放走 --exs-fold-scale。 */
+.exs-fold-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 5;
+  --exs-fold-scale: 1;
+}
+
+.exs-fold-badge {
+  position: absolute;
+  transform: translate(-50%, -50%) scale(var(--exs-fold-scale, 1));
+  transform-origin: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1.5px solid var(--b3-theme-on-surface, #555);
+  border-radius: 50%;
+  background: var(--b3-theme-surface, #fff);
+  color: var(--b3-theme-on-surface, #333);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.exs-fold-badge:hover {
+  transform: translate(-50%, -50%) scale(calc(var(--exs-fold-scale, 1) * 1.18));
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.25);
+}
+
+.exs-fold-badge:active {
+  transform: translate(-50%, -50%) scale(calc(var(--exs-fold-scale, 1) * 0.94));
+}
+
+/* 折叠态：实心主色圆 + 白 ▶（右指三角 = 「可展开」） */
+.exs-fold-badge--folded {
+  border-color: var(--b3-theme-primary, #1a8fff);
+  background: var(--b3-theme-primary, #1a8fff);
+  color: #fff;
+}
+
+.exs-fold-badge__glyph {
+  font-size: 9px;
+  line-height: 1;
+  /* 微调视觉重心：三角字符自带左侧留白，往左挪 0.5px */
+  margin-left: -0.5px;
+}
+
+.exs-fold-badge--folded .exs-fold-badge__glyph {
+  font-size: 8px;
+}
+
+/* 展开态的 − 比三角略大 */
+.exs-fold-badge:not(.exs-fold-badge--folded) .exs-fold-badge__glyph {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* 隐藏成员计数徽章：钉在圆点右上角 */
+.exs-fold-badge__count {
+  position: absolute;
+  top: -6px;
+  right: -8px;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--b3-theme-on-surface, #333);
+  color: var(--b3-theme-surface, #fff);
+  font-size: 9px;
+  line-height: 13px;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* ============ 第五十三轮·批 0：演示模式（右上角入口 + 画布内抽屉） ============
+
+   入口钮走 vendor 的 renderTopRightUI 槽（.layer-ui__wrapper__top-right 是
+   flex + gap .75rem + justify-flex-end），所以它天然排在素材库 ⧉ 的**左边**，
+   不需要绝对定位魔法；容器 pointer-events 由 vendor 的 --ui-pointerEvents 管。
+   抽屉是 .exs-root（relative）的 absolute 子元素——含块跟着画布走，思源右 Dock
+   开着或页签分栏时不会跑到视口右缘（第三十八轮色板的教训）。层级同竖条取 8：
+   压过画布 UI、低于思源 Dialog。 */
+
+.exs-root .excalidraw .exs-present-fab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  padding: 3px;
+  border: 1px solid var(--exs-pill-border);
+  border-radius: 10px;
+  background: var(--island-bg-color);
+  color: var(--exs-text);
+  box-shadow: var(--exs-pill-shadow);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, transform 120ms ease;
+}
+
+.exs-root .excalidraw .exs-present-fab:hover {
+  color: var(--exs-accent);
+  transform: translateY(-1px);
+}
+
+.exs-present-drawer {
+  position: absolute;
+  top: 52px;
+  right: 10px;
+  bottom: 12px;
+  /* 可拖动：默认仍钉在右缘占满高度（bottom 定位），一旦被拖动就由内联样式接管
+     left/top 并把 right/bottom 置auto，此时靠 max-height 收住，别再拉满整列 */
+  max-height: calc(100% - 64px);
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  width: 268px;
+  max-width: calc(100% - 20px);
+  border-radius: 16px;
+  background: var(--exs-glass-bg);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  backdrop-filter: blur(18px) saturate(160%);
+  border: 1px solid var(--exs-glass-border);
+  outline: 0.5px solid var(--exs-glass-edge);
+  box-shadow: var(--exs-glass-shadow), var(--exs-glass-highlight);
+  color: var(--exs-text);
+  font-family: var(--exs-font-ui);
+  user-select: none;
+  -webkit-user-select: none;
+  animation: exs-present-in 180ms ease-out;
+}
+
+/* 拖动中：跟手、不要动画插值、提亮一点阴影表示「拎着」 */
+.exs-present-drawer--dragging {
+  animation: none;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+  cursor: grabbing;
+}
+
+@keyframes exs-present-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+}
+
+.exs-present-drawer__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 12px 8px 14px;
+  /* 头部是拖动把手：grab 光标 + 一点下方留白暗示可拎 */
+  cursor: grab;
+  touch-action: none;
+}
+
+.exs-present-drawer__head:active {
+  cursor: grabbing;
+}
+
+/* 头部里的按钮恢复指针光标，别让grab 误导「这里也能拖」以外的点击语义 */
+.exs-present-drawer__head button {
+  cursor: pointer;
+}
+
+.exs-present-drawer__title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.exs-present-drawer__meta {
+  flex: 1;
+  font-size: 11px;
+  color: var(--exs-text-secondary);
+}
+
+.exs-present-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--exs-text-secondary);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.exs-present-close:hover {
+  background: var(--exs-hover);
+  color: var(--exs-text);
+}
+
+.exs-present-drawer__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 8px 4px;
+  scrollbar-width: thin;
+}
+
+.exs-present-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.exs-present-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 9px;
+  transition: background-color 120ms ease;
+}
+
+.exs-present-row:hover {
+  background: var(--exs-hover);
+}
+
+.exs-present-row--active {
+  background: var(--exs-accent-subtle);
+}
+
+.exs-present-row--off .exs-present-row__name,
+.exs-present-row--off .exs-present-row__no {
+  opacity: 0.45;
+}
+
+.exs-present-row__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px 6px 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.exs-present-row__no {
+  flex: none;
+  min-width: 17px;
+  height: 17px;
+  border-radius: 5px;
+  background: var(--exs-hover-strong);
+  color: var(--exs-text-secondary);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 17px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.exs-present-row--active .exs-present-row__no {
+  background: var(--exs-accent-container);
+  color: var(--exs-accent-on-container);
+}
+
+.exs-present-row__name {
+  min-width: 0;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exs-present-mini {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-right: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--exs-text-secondary);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.exs-present-mini:hover:not(:disabled) {
+  background: var(--exs-hover-strong);
+  color: var(--exs-text);
+}
+
+.exs-present-mini:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.exs-present-mini--off {
+  color: var(--exs-text);
+}
+
+/* 批 1C/1E：整页模式的那条「逐条」按钮压暗；设置区的推子与开关 */
+.exs-present-mini--muted {
+  opacity: 0.4;
+}
+
+.exs-present-close--on {
+  background: var(--exs-hover);
+  color: var(--exs-text);
+}
+
+.exs-present-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0 8px 6px;
+  padding: 8px 8px 6px;
+  border-radius: 10px;
+  background: var(--exs-hover);
+}
+
+.exs-present-set {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+  font-size: 12px;
+  color: var(--exs-text);
+}
+
+.exs-present-set__label {
+  flex: none;
+  width: 62px;
+  color: var(--exs-text-secondary);
+}
+
+.exs-present-set--range input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  height: 18px;
+  accent-color: var(--exs-accent);
+}
+
+.exs-present-set__val {
+  flex: none;
+  width: 62px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--exs-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.exs-present-set--disabled {
+  opacity: 0.45;
+}
+
+.exs-present-switch {
+  position: relative;
+  flex: none;
+  margin-left: auto;
+  width: 34px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--exs-hover-strong);
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+
+.exs-present-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 140ms ease;
+}
+
+.exs-present-switch:checked {
+  background: var(--exs-accent);
+}
+
+.exs-present-switch:checked::after {
+  transform: translateX(14px);
+}
+
+.exs-present-switch:disabled {
+  cursor: default;
+}
+
+.exs-present-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 6px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--exs-hover);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--exs-text-secondary);
+}
+
+.exs-present-empty b {
+  font-size: 13px;
+  color: var(--exs-text);
+}
+
+.exs-present-tip {
+  margin: 6px 6px 2px;
+  padding: 0 4px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--exs-text-secondary);
+}
+
+.exs-present-drawer__foot {
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--exs-separator);
+}
+
+.exs-present-play {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--exs-accent);
+  color: var(--exs-accent-on);
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.exs-present-play:hover:not(:disabled) {
+  background: var(--exs-accent-hover);
+}
+
+.exs-present-play:disabled {
+  background: var(--exs-hover-strong);
+  color: var(--exs-text-secondary);
+  cursor: default;
+}
+
+/* 批 1A：放映中本插件自绘控件整体让位（vendor 的 UI 由 viewModeEnabled 收） */
+.exs-root.exs-presenting .exs-bottom-dock,
+.exs-root.exs-presenting .exs-script-rail {
+  display: none;
+}
+
+/* ---------- 批 1B：幕布 + HUD ----------
+
+   幕布是 SVG mask：一整块半透明黑，当前页画框处挖洞（洞的坐标由 rAF 每帧更新，
+   跟着相机动画走）。两层都挂在 .exs-canvas 里，z-index 5/7：
+   压过画布与 vendor 网格，低于抽屉（8）与思源 Dialog。 */
+
+.exs-canvas .exs-present-scrim {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.exs-present-scrim__fill {
+  fill: rgba(9, 11, 15, 0.55);
+}
+
+.exs-present-scrim__edge {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.14);
+  stroke-width: 1;
+}
+
+.exs-canvas .exs-present-hud {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px 20px;
+  pointer-events: none;
+}
+
+.exs-present-hud__top {
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
+}
+
+.exs-present-exit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 50%;
+  background: rgba(20, 22, 26, 0.62);
+  color: rgba(255, 255, 255, 0.88);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+  backdrop-filter: blur(10px);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.exs-present-exit:hover {
+  background: rgba(40, 43, 49, 0.82);
+  color: #fff;
+}
+
+.exs-present-hud__bottom {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  max-width: min(720px, 80%);
+  padding: 8px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  background: rgba(20, 22, 26, 0.66);
+  color: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+  pointer-events: auto;
+  backdrop-filter: blur(12px);
+}
+
+.exs-present-hud__title {
+  flex: 0 1 auto;
+  max-width: 34vw;
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 550;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.exs-present-hud__dots {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 46vw;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.exs-present-hud__dots::-webkit-scrollbar {
+  display: none;
+}
+
+.exs-present-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.28);
+  cursor: pointer;
+  transition: width 160ms ease, background-color 160ms ease;
+}
+
+.exs-present-dot:hover {
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.exs-present-dot--past {
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.exs-present-dot--on {
+  width: 18px;
+  background: var(--exs-accent);
+}
+
+.exs-present-hud__count {
+  flex: none;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.62);
 }

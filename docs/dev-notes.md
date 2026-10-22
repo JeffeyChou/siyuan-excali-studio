@@ -2,6 +2,9 @@
 
 > 2026-10-20 由 README.md 精简迁出：按开发轮次记录的功能细节、仓库结构与内部取舍，面向维护者。
 > 集市用户请看根目录 [README.md](../README.md)。
+>
+> **各轮条目是当时的口径，不回改**；被后续轮次推翻的地方以**最后一轮为准**，
+> 或在「功能细节」开头那节（当前行为）里体现。例：第十九轮的 BAK 写侧已由第五十四轮退役。
 
 # 功能细节（按开发轮次）
 
@@ -41,12 +44,14 @@
 - **自动保存**（唯一保存形态，不可关）：新建即有文件，作画停手约 1 秒防抖落盘；
   `⌘S` 强制落盘；失焦/切走/关页签强制冲刷。两道避让闸（对齐 Obsidian autosave 清单）：
   空场景不落盘（清板不会把好文件写成空的）、正在画一笔/编辑文字时不落盘。
-  覆盖保存前按设置把上一版滚进 `.bak` 链（三份，默认开；空/坏内容不入链）
+  第五十四轮起**不再写 `.bak` 备份档**（一块板在目录里只有一份文件），落盘前加两道等价门：
+  正文逐字相同、或载荷语义相同（只是 vendor 归一化/键序差异）都直接返回、不重写文件
 - **文件列表打开**：dock 白板库即文件列表（修改时间新的在前，「已打开」「已建档」角标，
   第二十二轮起改原生样式：无搜索框，行内悬停出重命名/删除），点即打开；顶栏右键
   「打开白板…」「按路径打开…」保留。删除文件用 dock 行右键（或行内悬停删除按钮）
   或思源资源面板即可（白板就是普通 assets 文件）
-- 设置页新增两项：覆盖前留备份（自动保存在第二十一轮成为唯一形态后删除开关）
+- 设置项「覆盖前留备份」已于第五十四轮随备份链一起删除（自动保存在第二十一轮就先成了
+  唯一保存形态，开关那时已名存实亡）
 
 **阶段 B 新增（2026-10-15）**
 
@@ -330,6 +335,9 @@ dock 白板库是唯一主入口，文档树降级为**可选存档层**（要�
   board-lib.test 重写（文件绑定/显示名/过滤/指纹/删除计划 + 门控/删除/菜单接线）
 
 **第十九轮（2026-10-17，BAK 纪律 + 恢复入口 + 自动保存避让 + 重名避重——移植 Obsidian Excalidraw 的可靠性工程）**
+
+> 第五十四轮把这一轮的**写侧**（滚 `.bak` 三份）整体退役了，读侧（列表排除、恢复入口、
+> 改名搬链、删除扫档）留着收拾存量。下面这段是按当时口径写的历史记录。
 
 对标调研（保存管线/BAK 语义/避让清单/失败可见）后拍板的移植子集：**不做覆盖确认**（Obsidian 也没有，
 安全性来自备份纪律而非弹窗）、**不抄外部修改同步**（思源没有文件外部改动事件）、
@@ -916,13 +924,14 @@ dock 白板库是唯一主入口，文档树降级为**可选存档层**（要�
 - **外部智能体 CLI + Skill**（WorkBuddy/Qoder 等能跑命令的 agent）：
   - `scripts/excali-board.mjs`：`list` / `create` / `append` 三个动作；
     `--workspace`、`--plan <文件|->`（`--plan-json` 直传）、`--board`、`--title`、
-    `--dir`、`--query`、`--dry-run`（只渲染不写盘）、`--no-backup`；
+    `--dir`、`--query`、`--dry-run`（只渲染不写盘）；
     Node 22.6+（`--experimental-strip-types`），所有结果一行 JSON
   - 目录按**资产相对路径**解释：`assets/excali` → `{workspace}/data/assets/excali`
     （首版误写成 `{ws}/assets/excali`，实机核对后修正）；只允许写工作空间 `data/`
     内，拒绝路径穿越与非 `.svg`
-  - 写入纪律与插件一致：坏场景拒绝覆盖、非空才进 BAK、`.bak.svg`/`.bak2`/`.bak3`
-    三份滚动、temp+rename 原子写、同名滚 `_0/_1`、已存在元素 id 加时间戳前缀
+  - 写入纪律与插件一致：坏场景拒绝覆盖、temp+rename 原子写、同名滚 `_0/_1`、
+    已存在元素 id 加时间戳前缀；第五十四轮起 `--no-backup` 与 BAK 滚动一起删除，
+    改为「正文逐字 + 载荷语义」等价门（等价则不重写，JSON 里回 `unchanged: true`）
   - `script/excali-draw/SKILL.md`：教模型写计划 JSON、先 `list` 再 `append`、
     **白板正开着时不要 CLI 直写**（画布自动保存会覆盖）、失败码处理；集市版
     `package.zip` 不含 `scripts/`，找不到 CLI 时回退内置智能体 `excali_draw_board`
@@ -1395,6 +1404,107 @@ dock 白板库是唯一主入口，文档树降级为**可选存档层**（要�
 - 真机冒烟（CLI 临时工作空间）：默认 create 落盘成功 → 写 `aiChannels.cli=false` 后
   create 被拒（退出码 1）、list 与 --dry-run 照常
 
+**第五十四轮（2026-10-22，白板库「一块板一个文件」：备份链退役 + 落盘等价门 + 主题槽位不再互踩）**
+
+问题（用户实测）：每次重新打开白板，保存目录就多出一份文件。三件事叠在一起：
+
+1. **备份链本身**（第十九轮设计）：每次覆盖保存滚 `.bak`/`.bak2`/`.bak3` 三份。真实库里
+   23.5MB 资源有 20.8MB 是备份档——占位的正是它。
+2. **「打开没动」也算改动**（抖动①）：T4 双主题背景把 `viewBackgroundColor` 分别写进
+   `excaliLightBg`/`excaliDarkBg`，但 vendor `restore()` 会把这两个自定义键从 appState 里
+   剥掉，于是落盘时「另一主题的槽位」看不到旧值——亮色设过的 A 被暗色那次保存洗成空，
+   重开又是另一份 appState，逐字比较永远不等。
+3. **归一化差异永远逐字不等**（抖动②）：`boundElements: null` 读回来是 `[]`、缺省键被补齐、
+   键序被重排。防抖自动保存一到期就把「内容其实没变」的文件重写一遍，顺带滚一次备份链。
+
+拍板（用户选项）：**彻底关掉文件备份**、**存量 `.bak` 全部删光一档不留**、**两项抖动都修**。
+
+- **写侧删干净**：`writeBackup` 从前端（`storage.ts`）、内核（`kernel/io.ts`）、无头 CLI
+  （`scripts/excali-board.mjs`，连 `--no-backup` 一起）三处删除；设置项 `keepBackup`
+  从类型、默认值、归一化白名单和设置页移除（老 settings.json 的残键静默丢弃）；
+  两份 i18n 各删「覆盖前留备份」标题与说明两个键（键数保持对齐）。
+- **读侧刻意留着**：插件已发布，别人库里还有存量链条。`BACKUP_KEEP`/`backupPathOf`/
+  `backupChainOf`/`isBackupPath`、`listBoardEntries` 排除备份档、解码失败页「从备份恢复」、
+  重命名把链条搬走、删除计划 `plan.bakPaths` 逐档清扫——一套都不动，只是不再产生新档。
+- **等价门（`scene-codec.ts`）**：`sceneSemanticsOf` 把载荷规范成排序键、剥掉 `null`/`undefined`
+  和空 `boundElements` 的 JSON 串；`sceneTextsEquivalent` 先逐字短路，再比语义，
+  **任一侧解不出都算不等**（宁可多写一次，不许把能救的档当等价吞掉）。
+  前端 `saveSvg` 与内核 `writeSvg`、CLI `append` 三条落盘口同口径。
+- **主题槽位修好（`theme.ts`）**：`withThemeBgSlot(appState, mode, slots)` 第三参是打开时读到的
+  槽位——vendor 剥掉的另一主题键从这里带回来；`StudioApp.flush` 传 `bgSlotsRef.current`。
+  只有当前主题的槽位被写，另一主题的槽位原样保留；两边都空则不落键（与 `persistableAppState`
+  剥空串同口径）。
+- **存量清理**：删前逐块验主文件能解码且元素非空（25 份备份全删，15 块主板完好），
+  一次回收约 20MB。
+- 测试：47 文件全绿。`scene.test.mjs` 加语义门运行测（归一化等价 / 真改动不等 / 解不出不算等）；
+  `media-ref.test.mjs` 加「vendor 剥键后另一主题槽位从 slots 带回」；`storage.test.mjs` 换成
+  `renameSvg` 搬链不生新档；`board-lib.test.mjs` 两条备份断言改成「写侧无 `.bak`、读侧留存量」；
+  `ai-cli`/`ai-wiring`/`kernel` 三处按新契约改写（CLI 回 `unchanged` 字段代替 `backup`）。
+
+**第五十五轮（2026-10-22，演示模式：画框当幻灯片 + 有向图导航 + 打字机）**
+
+对标调研 Obsidian Excalidraw Slideshow 脚本与 Advanced Canvas 的演示内核后拍板：**片单 = 画布上的
+画框**，不新增元素类型（vendor 的 frame 本来就是「一块有名字的版面」，用户框选即得页）。
+
+- **纯逻辑层拆开**：`presentation-plan.ts`（画框→片单、页序/排除元数据换算）、
+  `presentation-graph.ts`（画框间箭头→有向图）、`presentation-nav.ts`（沿边走）、
+  `presentation-run.ts`（逐条出场计划）、`presentation-typewriter.ts`（逐字放）——
+  五个模块都不 import React / 思源 / vendor，node 侧直接跑单测。
+- **元数据落点**：`frame.customData.presentation`（vendor 官方透传 customData、restore 原样保留），
+  不新增元素字段、不进注册表。
+- **页序口径**：没动过排序 = 按阅读顺序（先上后下、同行先左后右，`DECK_ROW_TOLERANCE=60`）；
+  第一次显式排序才给每页写 `order`。⇒「画完就能放」，排过序的板子不因改画框名/挪位置跳页。
+- **有向图导航**：节点=画框，边=画框之间的箭头。边识别走双通道（引擎绑定 + 几何判定端点落框内）；
+  出边排序=有 label 的在前并按字母序；选边=第一条没走过的，全走过退回最后一条（成环）。
+  后退沿访问栈弹回。**没有箭头时线性兜底**（片单顺序），零配置体验不受影响。
+- **放映不隐藏整页内容**：只对「本页逐条出场还没轮到」的元素做 opacity 显隐；非当前页成员一律
+  不碰（靠相机把它移出视口）。画框框线/名字靠
+  `appState.frameRendering={enabled:false,name:false,outline:false,clip:false}` 消除，退出按快照还原。
+  **绝不再用「画框 opacity 压 0」**（那是「放映全空」的根因）。
+- **打字机**：只改 `element.text`，不碰 width/height/originalText（0.18.1 用 `text` 当显示内容、
+  `originalText` 当换行与尺寸的度量源——截短 text 不会让文本框塌缩，帧间无抖动）。绑定文字
+  （containerId != null）一律跳过。按字素切分（Intl.Segmenter）不按 UTF-16 码元，emoji/组合音标不劈开。
+- **相机口径**：`scrollX = vw/(2*zoom) - cx`（**减号在前**，写成 `cx - vw/(2*zoom)` 会互为相反数 ⇒
+  镜头飞到画布另一侧）。可用宽高要减掉 canvasOffsets 的 left/right/top/bottom。
+- **产物归属**：StudioApp / overlay / 演示面板 / 文本折叠圆点都打在 `dist-engine/engine.js`，
+  不是 `dist/index.js`（index.js 只有脚本库/picker）。grep 验证落盘别找错包。
+
+**第五十六轮（2026-10-22，文本折叠：Notion 式折叠列表）**
+
+- 形态：画布上一组垂直排列的元素，最上的当「折叠头」，其余收进它的 `excaliToggle` 字段；
+  折叠头左侧由 `TextFoldOverlay` 画一个圆点控制钮（对标 Obsidian Canvas Folding 的 − 控制点）。
+- 与 frame-collapse 的分工：frame 折叠面向「整块场景收放」，本模块面向「列表收放」——容器是
+  普通元素（通常是文字），不占画布结构。
+- 数据形状：折叠态 `{collapsed:true, elements:[成员深快照]}`；展开态 `{collapsed:false, memberIds:[]}`
+  （再折叠按 id 收）。引擎 restore 的 `...element` 展开保证往返。
+- 已知边界（与 frame-collapse 一致）：快照成员回传走 makeElement 重建，成员自带的自定义字段
+  （如 `excaliRecipe` 配方）不保留；文本/位置/字号/字体无损。还原成员的 index 重置 ⇒ z 序被推到
+  最上层（列表场景元素不重叠，无感）。
+
+**第五十七轮（2026-10-22，多画板 radio 互斥串扰修复）**
+
+- 根因（vendor 0.18.1 源码 + Chrome 实测双重坐实）：vendor 把形状工具渲染成**原生 radio**
+  （`ToolButton type="radio" name="editor-current-shape"`），`name` 是**硬编码常量**（只有 `id`
+  才带实例 id `${excalId}-${props.id}`），而 HTML radio 分组**只看 name**、跟属于哪个 React 树/
+  哪个画板毫无关系。⇒ 开多个画板页签时，同 document 里出现多组同名 radio：A 点点箭头 → 浏览器
+  按互斥规则取消 B 的选中 → B 的受控重渲染又把 checked=true 写回 → 反手抢掉 A 的选中，两个实例
+  互相踩 ⇒ 高亮来回跳。高亮是纯 CSS 伪类驱动（`.ToolIcon_type_radio:checked + .ToolIcon__icon`），
+  DOM 的 checked 一被改掉背景立刻消失。
+- 修法：`radio-isolation.ts` 给每个画板实例分配独立的 radio `name`（`name` 实例唯一化），
+  保留 vendor 原有 class 结构（`:checked` 选择器仍命中），不动 vendor 源码。
+- 复现口径：开 ≥2 块白板 → 在任一块点形状工具 → 另一块的选中态**不许**跟着变。
+
+**第五十八轮（2026-10-22，移动端画板壳）**
+
+- 根因：思源移动端前端**没有自定义页签**——`Plugin.addTab` 是空实现、`window.siyuan.openTab`
+  也是空函数。桌面那条「注册页签模型 → openTab(custom)」在 iPad 上静默什么都不做，表现是白板
+  文件已建好、画板永远不出现。
+- 修法：`mobile-studio.ts` 用宿主自己的全屏浮层承载同一套 StudioApp——仍复用 tab.tsx 的
+  `attachStudioTab`（引擎 chunk 里），只把 Custom/Tab 换成最小可用替身：element = 浮层内容区、
+  tab.headElement = 浮层标题栏、tab.close = 拆浮层。关闭冲刷、脏点、重命名跟标题、动作注册
+  这些既有链路一条不用改。
+- 约束：该模块必须留在宿主 bundle——**不能 import tab.tsx 的运行时**（会提前拉进 8MB 引擎）。
+
 **适配**
 
 - 跟随思源明暗主题；可选「画笔颜色跟随思源强调色」（只影响新建画板第一笔的默认色）
@@ -1413,7 +1523,7 @@ dock 白板库是唯一主入口，文档树降级为**可选存档层**（要�
   `scripts/excalidraw-zh-cn-patch.mjs` 打补丁补齐（机制见「已知取舍」）
 - 移动端：`plugin.json` 声明 `mobile` / `browser-mobile`，页签形态在移动端同样可用；
   触屏手势与双指缩放由 Excalidraw 自带（实机未验，见文末清单）
-- 设置页（插件自带 `openSetting`）：保存目录、画笔颜色跟随思源强调色、空画板引导画面开关、覆盖前留备份、默认显示网格、白板文档目录、新建时自动建档、打开白板文档时自动进入画板、白板体检按钮；最近打开在顶栏右键菜单里
+- 设置页（插件自带 `openSetting`）：保存目录、画笔颜色跟随思源强调色、空画板引导画面开关、默认显示网格、白板文档目录、新建时自动建档、打开白板文档时自动进入画板、白板体检按钮；最近打开在顶栏右键菜单里（第五十四轮删掉「覆盖前留备份」——备份链已退役，设置项 `keepBackup` 一并从模型与归一化白名单里去掉，老 settings.json 里残键会被忽略）
 - 斜杠命令执行后会清掉留在正文里的 `/白板` 半截文本，且**走思源事务**
   （补发一个 `input` 事件让撤销栈与落盘都认这次删除）
 
@@ -1432,7 +1542,7 @@ src/siyuan/board-picker.ts   「打开白板…」选择器：文件名搜索 + 
 src/siyuan/script-store.ts   白板脚本存储：assets/excali-scripts/*.md（H1 标题 + 代码围栏）
 src/siyuan/script-runner.ts  脚本运行器：new Function + ea 注入，console 收集进运行结果
 src/studio/board-list.ts     选择器纯逻辑：时间文案 + 关键字过滤（node 可直接单测）
-src/studio/board-lib.ts      白板库纯逻辑：文件↔文档绑定 / 显示名 / 库指纹 / 删除计划 / 备份链（第十七、十九轮；过滤函数随 dock 搜索框删除退役）
+src/studio/board-lib.ts      白板库纯逻辑：文件↔文档绑定 / 显示名 / 库指纹 / 删除计划 / 存量备份链（第十七、十九轮；第五十四轮起只服务读侧）
 src/studio/scene-dirty.ts    脏判定的场景指纹（零依赖，node 可直接单测；第十五轮取代「收到回调即脏」）
 src/studio/assets.ts         离线字体基址
 src/studio/icons.ts          addIcons 的 symbol 与斜杠项 html（两处共用同一个图标 id）
@@ -1440,7 +1550,7 @@ src/studio/theme.ts          思源明暗主题读取/订阅 + 强调色读取
 src/studio/scene-codec.ts    纯解码器：SVG 文本 → 内嵌 scene（零 vendor 依赖，可单测）
 src/studio/scene.ts          解码 + Excalidraw restore 归一化（修绑定等）
 src/studio/svg.ts            scene → 内嵌 scene 的 SVG 文本（带标记自检）
-src/studio/storage.ts        putFile/getFile 落盘、备份滚动链、重名避重与路径归一
+src/studio/storage.ts        putFile/getFile 落盘、存量备份链（读侧）、重名避重与路径归一
 src/studio/settings.ts       设置模型与归一化
 src/studio/welcome.ts        引导画面数据层：手绘纸飞机路径常量 + 菜单行小图标
 src/studio/hotkeys.ts        快捷键文案（menuShortcut 走 Cmd+/Ctrl+，boardHotkey 走符号：那列只有 3rem）
@@ -1463,8 +1573,8 @@ src/studio/ai/headless.ts    无 DOM/canvas 场景构建 + SVG 编码（CLI 用�
 src/studio/ai/imagegen.ts    位图生成：OpenAI 兼容 images API、b64/url 解析、格式嗅探（前端与内核共用）
 src/studio/ai/proxy.ts       前端 forwardProxy 代理（生图请求经思源网络层）
 src/kernel/index.ts          内核入口：四工具注册（agent.registerCapability / mcp.registerTool 回退）
-src/kernel/boards.ts         内核白板：列/读/画/生图、路径白名单、BAK、_0/_1 避重
-src/kernel/io.ts             内核文件 IO：/api/file/*、手工 multipart、备份链
+src/kernel/boards.ts         内核白板：列/读/画/生图、路径白名单、_0/_1 避重（第五十四轮起不写 BAK）
+src/kernel/io.ts             内核文件 IO：/api/file/*、手工 multipart、同内容不落盘的等价门
 src/kernel/proxy.ts          内核 forwardProxy（siyuan.client.fetch）
 src/kernel/runtime.ts        goja 垫片：atob/btoa/TextEncoder/TextDecoder
 src/kernel/state.ts          内核设置读取：storage.get("excali-studio") + normalizeSettings

@@ -247,8 +247,8 @@ test("第四十轮：ea.addLibraryItem——脚本写素材库（此前无写库
   assert.deepEqual(calls[0].excaliRecipe, { kind: "excali-outline", v: 1 });
 });
 
-test("BUILTIN_SCRIPTS：17 个脚本全部可解析（H1+围栏），新脚本引用的 API 在 EaApi 面内", () => {
-  assert.equal(BUILTIN_SCRIPTS.length, 17);
+test("BUILTIN_SCRIPTS：19 个脚本全部可解析（H1+围栏），新脚本引用的 API 在 EaApi 面内", () => {
+  assert.equal(BUILTIN_SCRIPTS.length, 19);
   // 第三十四轮（字体补丁方案）：apply-font-* 六件套已废弃——fontFamily 是数字枚举，
   // 写字符串走不通；六款字体改由构建期 vendor 注册表补丁注入（见 scripts/excalidraw-fonts-patch.mjs）
   assert.ok(!BUILTIN_SCRIPTS.some((x) => x.file.startsWith("apply-font-")), "apply-font-* 已废弃，不应再出现在内置脚本");
@@ -258,6 +258,8 @@ test("BUILTIN_SCRIPTS：17 个脚本全部可解析（H1+围栏），新脚本�
   assert.ok(files.includes("text-numbering.md"), "文字编号（按选择顺序；与 number-badges 徽标互不替代）");
   assert.ok(files.includes("highlighter.md"), "第三十八轮：荧光笔（可固定到侧边栏当功能扩展）");
   assert.ok(files.includes("material-recipe.md"), "第四十轮：素材配方（改色/改参数/重新生成）");
+  assert.ok(files.includes("frame-collapse.md"), "画框折叠/展开（collapsible groups 演示版：快照挂 frame 自定义字段）");
+  assert.ok(files.includes("selection-fold.md"), "选区折叠为列表（Notion 式 toggle list：头挂 excaliToggle + 圆点控制钮）");
   for (const name of ["box-selection", "uniform-size", "reverse-arrows", "change-shape"]) {
     assert.ok(files.includes(name + ".md"), "缺内置脚本：" + name);
   }
@@ -398,8 +400,17 @@ test("第三十六轮 v4：text-numbering 仿真——Shift 显式弹格式菜�
   await runScriptCode(code, r4.ea, {});
   assert.equal(r4.calls.prompt.length, 1, "Shift 才弹一次菜单");
   assert.equal(r4.calls.prompt[0].current, "1", "预勾选脚本库设置里的默认格式");
-  assert.deepEqual(r4.calls.prompt[0].options.map((o) => o.value), ["1", "2", "3", "4", "5"], "菜单只给五种格式（无自由输入）");
+  assert.deepEqual(r4.calls.prompt[0].options.map((o) => o.value), ["1", "2", "3", "4", "5", "6"], "菜单六种格式（含第五十一轮无序列表，无自由输入）");
   assert.deepEqual(r4.calls.setText.map((x) => x[1]), ["a. 第一步", "b. 第二步"], "按新选的格式重编号");
+
+  // ⑥ 无序列表（第五十一轮）：设置 "6" 直跑出 •；全部带 • 时再点 = 整列去掉（PREFIX_RE 认点号）
+  const r6 = makeEa(els1, ["t0", "t1"], "6");
+  await runScriptCode(code, r6.ea, {});
+  assert.deepEqual(r6.calls.setText.map((x) => x[1]), ["• 苹果", "• 香蕉"], "无序列表 = 每条前缀 •");
+  const els5 = [textEl("b0", "• 第一项"), textEl("b1", "◦ 第二项")];
+  const r11 = makeEa(els5, ["b0", "b1"], "1");
+  await runScriptCode(code, r11.ea, {});
+  assert.deepEqual(r11.calls.setText.map((x) => x[1]), ["第一项", "第二项"], "带点号的列表再点一次 = 去掉列表符");
 
   // ⑤ Shift + 取消（菜单返回 null）= 什么都不做（修复「取消也运行脚本」）
   const r5 = makeEa(els2, ["a", "b"], "1", null, { shift: true });
@@ -565,4 +576,380 @@ test("内置脚本：highlighter.md 已注册（可固定到侧边栏当功能�
   assert.match(hl.content, /^# 荧光笔/m, "H1 标题 = 脚本名");
   assert.match(hl.content, /ea\.highlighter\(\);/, "正文一键切荧光笔");
   assert.equal(/SCRIPT_SETTING|ea\.setPen\(\{ color: "/.test(hl.content), false, "脚本侧不带参数：调色只走设置里那一份");
+});
+
+/* --------------------- 脚本库体检回归（2026-10-22）：四个修好的脚本 --------------------- */
+
+import { expandElementSpecs, hasBoundText } from "../src/studio/ea-element.ts";
+
+/** 行为级 mock：elements 直读直改，addElements 走真·expandElementSpecs（保 id/保 frameId） */
+function scriptMock(initial = []) {
+  let elements = [...initial];
+  let selected = {};
+  const appState = {
+    get selectedElementIds() {
+      return selected;
+    },
+    set selectedElementIds(v) {
+      selected = v;
+    },
+  };
+  const calls = { delete: [], add: [], patch: [], notify: [], exportImage: [], addImage: [] };
+  const handle = {
+    getElements: () => elements,
+    getAppState: () => appState,
+    addElements: (specs) => {
+      calls.add.push(specs);
+      const els = expandElementSpecs(specs);
+      elements = [...elements, ...els];
+      const ids = [];
+      let cursor = 0;
+      for (const s of specs) {
+        const el = els[cursor];
+        if (!el) break;
+        ids.push(String(el.id));
+        cursor += hasBoundText(s) ? 2 : 1;
+      }
+      return ids;
+    },
+    patchElements: (ids, patch) => {
+      calls.patch.push([ids, patch]);
+      const set = new Set(ids);
+      elements = elements.map((e) => (set.has(e.id) ? { ...e, ...patch } : e));
+    },
+    deleteElements: (ids) => {
+      calls.delete.push(ids);
+      const set = new Set(ids);
+      elements = elements.filter((e) => !set.has(e.id));
+    },
+    selectElements: (ids) => {
+      selected = {};
+      ids.forEach((id) => (selected[id] = true));
+    },
+    scrollToContent: () => undefined,
+    scrollToElement: () => undefined,
+    setViewMode: () => undefined,
+    updateScene: () => undefined,
+    clear: () => undefined,
+    connectObjects: () => null,
+    addEmbeddable: () => "",
+    getTheme: () => "light",
+    setTheme: () => undefined,
+    addImage: async (dataURL, at) => {
+      calls.addImage.push({ dataURL, at });
+      return `img-${calls.addImage.length}`;
+    },
+    exportImage: async (format, scale, subset) => {
+      calls.exportImage.push({ format, scale, subset });
+      return new Blob();
+    },
+    getPen: () => ({ tool: "selection", color: "#1e1e1e", width: 2, opacity: 100, roughness: 1 }),
+    applyPen: () => undefined,
+  };
+  const host = {
+    getSettings: () => ({ saveDir: "assets" }),
+    notify: (m) => calls.notify.push(m),
+    save: () => undefined,
+    getDocMarkdown: async () => "",
+    getSelectedText: () => "",
+    listFiles: async () => [],
+    readFileAsDataURL: async (p) => `data:image/png;base64,${p}`,
+    inputPrompt: async () => "",
+    selectOption: async () => null,
+    siyuanCall: async () => null,
+    getScriptSetting: () => undefined,
+    setScriptSetting: () => undefined,
+    getHighlighter: () => ({ color: "#ffd43b", width: 4, opacity: 45 }),
+  };
+  const ea = createEaApi(handle, host, "x.md");
+  return { ea, handle, host, calls, get elements() { return elements; }, set elements(v) { elements = v; }, get selected() { return selected; }, set selected(v) { selected = v; } };
+}
+
+const builtinCode = (file) => parseScriptDoc(BUILTIN_SCRIPTS.find((s) => s.file === file).content).code;
+
+test("frame-collapse：折叠存快照+真删成员，展开归位并挂回 frameId（选中 id 先取元素）", async () => {
+  const code = builtinCode("frame-collapse.md");
+  const m = scriptMock([
+    { id: "f1", type: "frame", x: 0, y: 0, width: 700, height: 430, name: "项目笔记" },
+    { id: "m1", type: "rectangle", x: 40, y: 60, width: 120, height: 60, frameId: "f1" },
+    { id: "t1", type: "text", x: 40, y: 140, width: 80, height: 20, text: "卡片一", frameId: "f1" },
+  ]);
+  m.selected = { f1: true };
+
+  // ① 折叠
+  const r1 = await runScriptCode(code, m.ea, {});
+  assert.equal(r1.ok, true, r1.error);
+  const folded = m.elements.find((e) => e.id === "f1");
+  assert.ok(folded.excaliCollapsed, "快照挂在画框自定义字段上");
+  assert.equal(folded.excaliCollapsed.elements.length, 2, "两个成员进快照");
+  assert.equal(folded.height, 44, "画框缩成标签条");
+  assert.equal(folded.name, "项目笔记（2）", "名字带成员计数");
+  assert.deepEqual(m.calls.delete, [["m1", "t1"]], "成员真删（先存快照再删）");
+  assert.ok(m.calls.notify.join("").includes("已折叠 2 个元素"), "折叠提示");
+
+  // ② 模拟重开 + 画框被挪到 (100, 50)：展开应按位移量整体归位
+  m.elements = [{ ...folded, x: 100, y: 50 }];
+  m.selected = { f1: true };
+  const r2 = await runScriptCode(code, m.ea, {});
+  assert.equal(r2.ok, true, r2.error);
+  assert.equal(m.elements.length, 3, "两个成员还原 + 画框");
+  const m1 = m.elements.find((e) => e.id === "m1");
+  assert.equal(m1.x, 140, "x 按画框位移 100 归位");
+  assert.equal(m1.y, 110, "y 按画框位移 50 归位");
+  assert.equal(m1.frameId, "f1", "还原后重新挂回画框（frameId 补挂）");
+  const back = m.elements.find((e) => e.id === "f1");
+  assert.ok(!back.excaliCollapsed, "快照字段清掉（再跑一次 = 重新折叠）");
+  assert.equal(back.width, 700, "尺寸还原");
+  assert.equal(back.name, "项目笔记", "名字还原");
+  assert.ok(m.calls.notify.join("").includes("已展开 2 个元素归位"), "展开提示");
+});
+
+test("export-steps：ids 子集透传到 exportImage，按画布出现顺序逐张扩大", async () => {
+  const code = builtinCode("export-steps.md");
+  const m = scriptMock([
+    { id: "a", type: "rectangle", x: 0, y: 0, width: 10, height: 10 },
+    { id: "b", type: "rectangle", x: 20, y: 0, width: 10, height: 10 },
+    { id: "c", type: "rectangle", x: 40, y: 0, width: 10, height: 10 },
+    { id: "d", type: "rectangle", x: 60, y: 0, width: 10, height: 10 },
+  ]);
+  m.selected = { a: true, b: true, c: true };
+
+  // 脚本在浏览器里跑（document/URL 浏览器 API）；Node 里给最小桩
+  const realDoc = globalThis.document;
+  globalThis.document = { createElement: () => ({ click: () => undefined }) };
+  try {
+    const r = await runScriptCode(code, m.ea, {});
+    assert.equal(r.ok, true, r.error);
+  } finally {
+    if (realDoc === undefined) delete globalThis.document;
+    else globalThis.document = realDoc;
+  }
+
+  assert.equal(m.calls.exportImage.length, 3, "三张分步图（未选中的 d 不计）");
+  assert.deepEqual(
+    m.calls.exportImage.map((c) => c.subset),
+    [["a"], ["a", "b"], ["a", "b", "c"]],
+    "子集按画布出现顺序逐步扩大——修复前第二参被丢，每张都是全场景",
+  );
+  assert.ok(m.calls.exportImage.every((c) => c.format === "png" && c.scale === 2), "png @2x");
+});
+
+test("table-from-markdown：原地替换只删吃掉的草稿文本，同选的其它元素不动", async () => {
+  const code = builtinCode("table-from-markdown.md");
+  const draft = "| 名称 | 数量 |\n| --- | --- |\n| 苹果 | 3 |\n| 香蕉 | 5 |";
+  const m = scriptMock([
+    { id: "draft", type: "text", x: 300, y: 200, width: 200, height: 60, text: draft },
+    { id: "keep", type: "rectangle", x: 0, y: 0, width: 50, height: 50 },
+  ]);
+  m.selected = { draft: true, keep: true };
+
+  const r = await runScriptCode(code, m.ea, {});
+  assert.equal(r.ok, true, r.error);
+  assert.deepEqual(m.calls.delete, [["draft"]], "只删被消费的草稿文本");
+  assert.ok(m.elements.some((e) => e.id === "keep"), "同选的矩形不能被误删");
+  const rects = m.elements.filter((e) => e.type === "rectangle" && e.id !== "keep");
+  assert.equal(rects.length, 6, "表头 2 格 + 数据 2 行 × 2 列");
+  assert.ok(rects.every((e) => e.x >= 300), "表格画在草稿原位（x=300 起）");
+  assert.ok(m.calls.notify.join("").includes("原文本已删"), "提示原文本已删");
+});
+
+test("batch-import-images：只插图片格式（listFiles 列全部文件后由脚本过滤），4 列网格", async () => {
+  const code = builtinCode("batch-import-images.md");
+  const m = scriptMock([]);
+  m.host.listFiles = async () => ["assets/a.png", "assets/b.svg", "assets/c.jpg", "assets/notes.txt"];
+
+  const r = await runScriptCode(code, m.ea, {});
+  assert.equal(r.ok, true, r.error);
+  assert.deepEqual(
+    m.calls.addImage.map((c) => c.at),
+    [
+      { x: 0, y: 0 },
+      { x: 260, y: 0 },
+    ],
+    "svg/txt 跳过，png/jpg 各就各位（修复前 listFiles 只回 .svg，永远插进 0 张）",
+  );
+  assert.ok(m.calls.addImage[0].dataURL.includes("assets/a.png"), "读的是 listFiles 给的路径");
+  assert.ok(m.calls.notify.join("").includes("已插入 2 张图片"), "计数提示");
+});
+
+test("selection-fold：框选一批文本 → 最上的当折叠头，其余进快照被删（先存后删）", async () => {
+  const code = builtinCode("selection-fold.md");
+  const m = scriptMock([
+    { id: "h", type: "text", x: 300, y: 100, width: 200, height: 25, text: "核心词组", fontSize: 20 },
+    { id: "m1", type: "text", x: 300, y: 140, width: 200, height: 25, text: "earn vt 获得", fontSize: 20 },
+    { id: "m2", type: "text", x: 300, y: 180, width: 200, height: 25, text: "fill vt 充满", fontSize: 20 },
+    { id: "m3", type: "rectangle", x: 300, y: 220, width: 200, height: 40 },
+  ]);
+  m.selected = { h: true, m1: true, m2: true, m3: true };
+
+  const r = await runScriptCode(code, m.ea, {});
+  assert.equal(r.ok, true, r.error);
+  const head = m.elements.find((e) => e.id === "h");
+  assert.equal(head.excaliToggle.collapsed, true, "头挂折叠态快照");
+  assert.equal(head.excaliToggle.elements.length, 3, "三个成员进快照");
+  assert.deepEqual(m.calls.delete, [["m1", "m2", "m3"]], "成员真删（先存快照再删）");
+  assert.ok(m.calls.notify.join("").includes("已把 3 个元素收进「核心词组」"), "提示带头标签");
+});
+
+test("selection-fold：矩形在文本上方也选文本当头（文本优先）", async () => {
+  const code = builtinCode("selection-fold.md");
+  const m = scriptMock([
+    { id: "rect", type: "rectangle", x: 0, y: 50, width: 100, height: 30 },
+    { id: "head", type: "text", x: 0, y: 100, width: 100, height: 25, text: "标题行", fontSize: 20 },
+    { id: "m1", type: "text", x: 0, y: 140, width: 100, height: 25, text: "下属", fontSize: 20 },
+  ]);
+  m.selected = { rect: true, head: true, m1: true };
+  const r = await runScriptCode(code, m.ea, {});
+  assert.equal(r.ok, true, r.error);
+  assert.ok(m.elements.find((e) => e.id === "head").excaliToggle, "矩形 y 更小也不当头——文本优先");
+  assert.deepEqual(m.calls.delete, [["rect", "m1"]], "矩形当成员被收");
+});
+
+test("selection-fold：守卫——单人提示、折叠态头走解散不覆盖快照", async () => {
+  const code = builtinCode("selection-fold.md");
+  // ① 只选 1 个
+  const m1 = scriptMock([{ id: "solo", type: "text", x: 0, y: 0, width: 50, height: 20, text: "就我一个", fontSize: 20 }]);
+  m1.selected = { solo: true };
+  const r1 = await runScriptCode(code, m1.ea, {});
+  assert.equal(r1.ok, true, r1.error);
+  assert.ok(m1.calls.notify.join("").includes("至少 2 个元素"), "单人提示");
+  assert.equal(m1.calls.delete.length, 0, "不删任何东西");
+
+  // ② 头已是折叠态 → 再跑 = 解散恢复，绝不用新选区覆盖旧快照
+  const m2 = scriptMock([
+    { id: "h", type: "text", x: 0, y: 0, width: 50, height: 20, text: "已折叠", fontSize: 20, excaliToggle: { collapsed: true, elements: [{ id: "old" }] } },
+    { id: "n", type: "text", x: 0, y: 40, width: 50, height: 20, text: "新下属", fontSize: 20 },
+  ]);
+  m2.selected = { h: true, n: true };
+  const r2 = await runScriptCode(code, m2.ea, {});
+  assert.equal(r2.ok, true, r2.error);
+  assert.ok(m2.calls.notify.join("").includes("已恢复原样：1 个折叠已消除"), "折叠态头提示解散");
+  assert.equal(m2.calls.delete.length, 0, "不动场景");
+  assert.ok(m2.elements.some((e) => e.id === "old"), "旧快照成员回场");
+  assert.equal(m2.elements.find((e) => e.id === "h").excaliToggle, undefined, "折叠字段被清（无痕）");
+});
+
+test("selection-fold：只选一个折叠头 → 也算消除（不落入「至少 2 个」守卫）", async () => {
+  const code = builtinCode("selection-fold.md");
+  const m = scriptMock([
+    {
+      id: "h",
+      type: "text",
+      x: 0,
+      y: 0,
+      width: 50,
+      height: 20,
+      text: "已折叠",
+      fontSize: 20,
+      excaliToggle: { collapsed: true, elements: [{ id: "m1", type: "text", x: 0, y: 40, width: 50, height: 20 }] },
+    },
+  ]);
+  m.selected = { h: true };
+  const r = await runScriptCode(code, m.ea, {});
+  assert.equal(r.ok, true, r.error);
+  assert.equal(m.calls.notify.join("").includes("至少 2 个元素"), false, "不被单人守卫拦下");
+  assert.ok(m.calls.notify.join("").includes("已恢复原样：1 个折叠已消除"), "按消除处理");
+  assert.ok(m.elements.some((e) => e.id === "m1"), "成员回场");
+  assert.equal(m.elements.find((e) => e.id === "h").excaliToggle, undefined, "字段清空");
+});
+
+test("selection-fold：不一致态（快照成员仍在场）→ 只补缺的，不插同 id 两元素", async () => {
+  const code = builtinCode("selection-fold.md");
+  const m = scriptMock([
+    {
+      id: "h",
+      type: "text",
+      x: 0,
+      y: 0,
+      width: 50,
+      height: 20,
+      text: "头",
+      fontSize: 20,
+      excaliToggle: {
+        collapsed: true,
+        // 典型的 ⌘Z 撤消删除后：快照里两个成员都还在画布上
+        elements: [
+          { id: "m1", type: "text", x: 0, y: 40, width: 50, height: 20 },
+          { id: "m2", type: "text", x: 0, y: 70, width: 50, height: 20 },
+        ],
+      },
+    },
+    { id: "m1", type: "text", x: 0, y: 40, width: 50, height: 20 },
+  ]);
+  m.selected = { h: true };
+  const r = await runScriptCode(code, m.ea, {});
+  assert.equal(r.ok, true, r.error);
+  const added = m.calls.add.flat().map((s) => s.id);
+  assert.deepEqual(added, ["m2"], "只补不在场的 m2（m1 已在场不重复插）");
+  assert.equal(m.elements.filter((e) => e.id === "m1").length, 1, "m1 只有一个");
+  assert.ok(m.calls.notify.join("").includes("1 个成员回到画布"), "计数只算补回的");
+});
+
+test("selection-fold：无选区 + 画布只有一个折叠 → 直接当开关恢复（不用再框选）", async () => {
+  const code = builtinCode("selection-fold.md");
+  const m = scriptMock([
+    {
+      id: "h",
+      type: "text",
+      x: 0,
+      y: 0,
+      width: 50,
+      height: 20,
+      text: "头",
+      fontSize: 20,
+      excaliToggle: { collapsed: true, elements: [{ id: "m1", type: "text", x: 0, y: 40, width: 50, height: 20 }] },
+    },
+  ]);
+  const r = await runScriptCode(code, m.ea, {});
+  assert.equal(r.ok, true, r.error);
+  assert.ok(m.calls.notify.join("").includes("已恢复原样：1 个折叠已消除"), "无选区也走消除模式");
+  assert.ok(m.elements.some((e) => e.id === "m1"), "成员回场");
+  assert.equal(m.elements.find((e) => e.id === "h").excaliToggle, undefined, "字段清空");
+});
+
+test("selection-fold：无选区 + 多个折叠 → 提示先选一个，不乱动", async () => {
+  const code = builtinCode("selection-fold.md");
+  const head = (id) => ({
+    id,
+    type: "text",
+    x: 0,
+    y: 0,
+    width: 50,
+    height: 20,
+    text: id,
+    fontSize: 20,
+    excaliToggle: { collapsed: true, elements: [{ id: id + "-m", type: "text", x: 0, y: 40, width: 50, height: 20 }] },
+  });
+  const m = scriptMock([head("h1"), head("h2")]);
+  const r = await runScriptCode(code, m.ea, {});
+  assert.equal(r.ok, true, r.error);
+  assert.ok(m.calls.notify.join("").includes("画布上有 2 个折叠"), "提示数量");
+  assert.equal(m.calls.add.length, 0, "不插任何元素");
+  assert.equal(m.calls.patch.length, 0, "不改任何元素");
+  assert.ok(m.elements.every((e) => e.excaliToggle), "两个折叠都还活着");
+});
+
+test("selection-fold：展开态头 → 只清字段，不动场景", async () => {
+  const code = builtinCode("selection-fold.md");
+  const m = scriptMock([
+    {
+      id: "h",
+      type: "text",
+      x: 0,
+      y: 0,
+      width: 50,
+      height: 20,
+      text: "展开中的头",
+      fontSize: 20,
+      excaliToggle: { collapsed: false, elements: [{ id: "m1", type: "text", x: 0, y: 40, width: 50, height: 20 }] },
+    },
+    { id: "m1", type: "text", x: 0, y: 40, width: 50, height: 20 },
+  ]);
+  m.selected = { h: true };
+  const r = await runScriptCode(code, m.ea, {});
+  assert.equal(r.ok, true, r.error);
+  assert.equal(m.calls.add.length, 0, "展开态成员都在场，不插任何元素");
+  assert.equal(m.calls.delete.length, 0, "不删任何元素");
+  assert.ok(m.calls.notify.join("").includes("（成员已在画布上）"), "提示说明成员本就在场");
+  assert.equal(m.elements.find((e) => e.id === "h").excaliToggle, undefined, "字段清空");
 });

@@ -67,7 +67,7 @@ test("T4：打开按主题挑槽位背景，落盘补当前主题槽位", () => 
   assert.match(APP, /readThemeBgSlots\(rawState\)/, "打开时读载荷里的双主题槽位");
   assert.match(APP, /themeBgForMode\(slots, mode, rawState\.viewBackgroundColor as string \| undefined\)/, "槽位有值用槽位，没存过的主题回落 viewBackgroundColor");
   // 落盘侧：flush 的场景补当前主题槽位（另一主题的槽位原样保留）
-  assert.match(APP, /withThemeBgSlot\(\s*scene\.appState as unknown as Record<string, unknown>,\s*modeRef\.current,\s*\)/, "落盘的 appState 先补当前主题背景槽位");
+  assert.match(APP, /withThemeBgSlot\(\s*scene\.appState as unknown as Record<string, unknown>,\s*modeRef\.current,\s*bgSlotsRef\.current,\s*\)/, "落盘的 appState 先补当前主题背景槽位（另一主题槽位从 bgSlotsRef 带过去）");
   // 切主题时画布背景换到另一槽位（槽位为空 = 保持现状）
   assert.match(APP, /const slot = mode === "dark" \? bgSlotsRef\.current\.dark : bgSlotsRef\.current\.light;/, "明暗切换走槽位换背景");
 });

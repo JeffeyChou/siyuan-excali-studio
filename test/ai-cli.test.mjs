@@ -1,5 +1,5 @@
 // 2026-10-18 B：无头 CLI 的行为测试。全部跑在 os.tmpdir 的临时工作空间里，
-// 不碰真实白板；重点盯「真实思源目录口径（data/assets/excali）、BAK 滚动、路径白名单」。
+// 不碰真实白板；重点盯「真实思源目录口径（data/assets/excali）、一块板一个文件、路径白名单」。
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -141,7 +141,7 @@ test("create·--dry-run 不落盘；--dir 支持资产相对与 data/ 前缀", a
   assert.equal(listed.json.boards[0].title, "子目录");
 });
 
-test("append·BAK 三份滚动 + 新内容画在旧内容下方 + --no-backup", async () => {
+test("append·一块板一个文件（不生出 .bak）+ 新内容画在旧内容下方", async () => {
   const ws = makeWorkspace();
   const base = await cli(ws, [
     "create",
@@ -162,37 +162,27 @@ test("append·BAK 三份滚动 + 新内容画在旧内容下方 + --no-backup", 
 
   const b = await runAppend("B");
   assert.equal(b.json.ok, true);
-  assert.equal(b.json.backup, true);
+  assert.equal(b.json.unchanged, false);
   assert.ok(b.json.origin.y > 130, "追加落点应在旧内容包围盒下方");
   const v2 = readFileSync(file, "utf8");
-  assert.equal(readFileSync(`${file}.bak.svg`, "utf8"), v1);
   assert.equal(decodeSvgPayload(v2).elements.length, 7);
 
   const c = await runAppend("C");
-  assert.equal(c.json.backup, true);
+  assert.equal(c.json.unchanged, false);
   const v3 = readFileSync(file, "utf8");
-  assert.equal(readFileSync(`${file}.bak2.svg`, "utf8"), v1);
-  assert.equal(readFileSync(`${file}.bak.svg`, "utf8"), v2);
 
   const d = await runAppend("D");
-  assert.equal(d.json.backup, true);
+  assert.equal(d.json.unchanged, false);
   const v4 = readFileSync(file, "utf8");
-  assert.equal(readFileSync(`${file}.bak3.svg`, "utf8"), v1);
-  assert.equal(readFileSync(`${file}.bak2.svg`, "utf8"), v2);
-  assert.equal(readFileSync(`${file}.bak.svg`, "utf8"), v3);
 
-  const noBackup = await cli(ws, [
-    "append",
-    "--workspace",
-    ws,
-    "--board",
-    "基线",
-    "--plan-json",
-    planJson({ nodes: ["E"] }),
-    "--no-backup",
-  ]);
-  assert.equal(noBackup.json.backup, false);
-  assert.equal(readFileSync(`${file}.bak.svg`, "utf8"), v3, "关掉备份不许动旧槽位");
+  const e = await runAppend("E");
+  assert.equal(e.json.unchanged, false);
+
+  // 第五十四轮：CLI 也不再滚 .bak——四次追加之后目录里仍然只有基线这一份文件
+  assert.equal(existsSync(`${file}.bak.svg`), false, "写侧不许产出 .bak");
+  assert.equal(existsSync(`${file}.bak2.svg`), false);
+  assert.equal(existsSync(`${file}.bak3.svg`), false);
+
   const finalScene = decodeSvgPayload(readFileSync(file, "utf8"));
   assert.equal(finalScene.elements.length, 13, "5 + 4 次追加 × 2");
   const ids = finalScene.elements.map((el) => el.id);

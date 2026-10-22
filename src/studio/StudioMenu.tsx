@@ -99,10 +99,10 @@ export function StudioMenu(props: StudioMenuProps) {
       <MainMenu.Item icon={<LineIcon d={ICON_EMBED} />} onSelect={props.onEmbedBlock}>
         {t("嵌入思源块…")}
       </MainMenu.Item>
-      {/* 第四十一轮：「插入白板卡片…」从菜单撤出——它住进右缘竖条（画布动作），
-          要临时插一次就从 ☰「运行脚本…」→ 脚本库 →「画布动作」进 */}
+      {/* 第四十一轮：「插入白板卡片…」从菜单撤出——它住进右缘竖条（拓展功能），
+          要临时插一次就从 ☰「拓展功能…」面板进 */}
       <MainMenu.Item icon={<LineIcon d={ICON_SCRIPT} />} onSelect={props.onRunScript}>
-        {t("运行脚本…")}
+        {t("拓展功能…")}
       </MainMenu.Item>
       {/* 第四十四轮：AI 通道总览（内置智能体 / 内核 MCP / CLI / 脚本体系四道门的开关）。
           生图的 API 地址/Key 不住这儿——面板管「开不开」，插件设置页管「怎么连」 */}

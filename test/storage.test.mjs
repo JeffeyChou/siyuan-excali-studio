@@ -5,7 +5,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { backupChainOf, backupPathOf, isBackupPath, joinSavePath, sanitizeFileName, stampFileName, uniqueTargetPath, writeBackup } from "../src/studio/storage.ts";
+import { backupChainOf, backupPathOf, isBackupPath, joinSavePath, renameSvg, sanitizeFileName, stampFileName, uniqueTargetPath } from "../src/studio/storage.ts";
 import { encodeSvgPayload } from "../src/studio/scene-codec.ts";
 
 test("sanitizeFileName：补 .svg、剥路径、去危险字符", () => {
@@ -81,55 +81,85 @@ test("uniqueTargetPath：撞名滚 _0/_1，改名撞自己不算撞（第十九�
   }
 });
 
-test("writeBackup：同一版内容不重复入链，真改动仍滚三档", async () => {
+/**
+ * 第五十四轮：备份链退役后 storage 只剩**读侧**。
+ * 这块锁两件事：① 改名把老用户库里的存量档整排搬走、且不因搬家生出新的空槽；
+ * ② 写盘出口（putSvg）本身不会顺手造出 `.bak`——备份是历史行为，不再是保存的副作用。
+ */
+test("renameSvg：存量备份链跟着搬，且不生出新的档", async () => {
   const scene = (n) =>
     `<svg>${encodeSvgPayload({
       elements: [{ id: `e${n}`, type: "rectangle", x: n, width: 10, height: 10 }],
       appState: {},
       files: {},
     })}</svg>`;
-  const v1 = scene(1);
-  const v2 = scene(2);
-  const v3 = scene(3);
-  const files = new Map();
+  const old = "/data/assets/a.svg";
+  const files = new Map([
+    [old, scene(1)],
+    [backupPathOf(old, 1), scene(0)],
+    [backupPathOf(old, 2), scene(-1)],
+  ]);
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (url, opts) => {
+    const body = opts?.body;
     if (url === "/api/file/getFile") {
-      const { path } = JSON.parse(opts.body);
+      const { path } = JSON.parse(body);
       if (!files.has(path)) {
-        return { ok: true, status: 200, headers: { get: () => "application/json" }, text: async () => JSON.stringify({ code: -1, msg: "File does not exist" }) };
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => "application/json" },
+          text: async () => JSON.stringify({ code: -1, msg: "File does not exist" }),
+        };
       }
       return { ok: true, status: 200, headers: { get: () => "image/svg+xml" }, text: async () => files.get(path) };
     }
     if (url === "/api/file/putFile") {
-      const path = opts.body.get("path");
-      files.set(path, await opts.body.get("file").text());
+      const path = body.get("path");
+      files.set(path, await body.get("file").text());
+      return { ok: true, status: 200, json: async () => ({ code: 0 }) };
+    }
+    if (url === "/api/file/removeFile") {
+      files.delete(JSON.parse(body).path);
       return { ok: true, status: 200, json: async () => ({ code: 0 }) };
     }
     throw new Error(`unexpected fetch ${url}`);
   };
   try {
-    const target = "/data/assets/a.svg";
-    files.set(target, v1);
-    await writeBackup(target);
-    assert.equal(files.get(backupPathOf(target, 1)), v1, "首版进槽 1");
+    const saved = await renameSvg(old, "/data/assets/b.svg");
+    assert.equal(saved, "/data/assets/b.svg");
+    assert.deepEqual(
+      [...files.keys()].sort(),
+      ["/data/assets/b.svg", "/data/assets/b.svg.bak.svg", "/data/assets/b.svg.bak2.svg"],
+      "两档存量搬到新名下；没有的槽 3 不被凭空造出来",
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
 
-    files.set(target, v2);
-    await writeBackup(target);
-    assert.equal(files.get(backupPathOf(target, 1)), v2);
-    assert.equal(files.get(backupPathOf(target, 2)), v1);
-
-    // 同内容再存：槽位不动，旧版不能被挤掉
-    await writeBackup(target);
-    assert.equal(files.get(backupPathOf(target, 1)), v2);
-    assert.equal(files.get(backupPathOf(target, 2)), v1);
-    assert.equal(files.get(backupPathOf(target, 3)), undefined, "空槽不被复制出伪历史");
-
-    files.set(target, v3);
-    await writeBackup(target);
-    assert.equal(files.get(backupPathOf(target, 1)), v3);
-    assert.equal(files.get(backupPathOf(target, 2)), v2);
-    assert.equal(files.get(backupPathOf(target, 3)), v1, "真改动照常滚到三档");
+test("listFilesWithExt：ext 省略 = 列全部文件（脚本 listFiles 口径）；给了正则才筛", async () => {
+  const { listFilesWithExt } = await import("../src/studio/storage.ts");
+  const rows = [
+    { name: "a.png" },
+    { name: "b.svg" },
+    { name: "c.txt" },
+    { name: "子目录", isDir: true },
+  ];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    assert.equal(url, "/api/file/readDir");
+    assert.deepEqual(JSON.parse(opts.body), { path: "/data/assets" });
+    return { ok: true, status: 200, json: async () => ({ code: 0, data: rows }) };
+  };
+  try {
+    assert.deepEqual(
+      await listFilesWithExt("assets"),
+      ["assets/a.png", "assets/b.svg", "assets/c.txt"],
+      "不筛扩展名（批量导入图片靠脚本侧正则卡格式），目录项跳过",
+    );
+    assert.deepEqual(await listFilesWithExt("assets", /\.png$/i), ["assets/a.png"], "给了正则才筛");
+    assert.deepEqual(await listFilesWithExt("", /\.svg$/i), ["assets/b.svg"], "空目录回落 assets");
   } finally {
     globalThis.fetch = realFetch;
   }

@@ -48,6 +48,8 @@ export type StudioTabHost = Pick<
   | "onHelp"
   | "getAiChannels"
   | "onAiChannel"
+  | "getPresentationSettings"
+  | "onPresentationSetting"
   | "getLibraryImportUrl"
   | "libDirAbs"
   | "gridModeEnabled"
@@ -180,7 +182,7 @@ export function attachStudioTab(custom: Custom, host: StudioTabHost): StudioTabS
   // ✕ 的处理是 .item__close 上的冒泡监听；在 headElement 捕获阶段先收，
   // preventDefault + stopPropagation 后事件到不了目标，只有我们放行才真关
   const onHeadClick = (event: MouseEvent): void => {
-    if (!(event.target instanceof Element) || !event.target.closest(".item__close")) return;
+    if (!(event.target instanceof Element) || !event.target.closest(".item__close, .exs-mobile-close")) return;
     event.preventDefault();
     event.stopPropagation();
     requestClose();
@@ -291,6 +293,8 @@ export function attachStudioTab(custom: Custom, host: StudioTabHost): StudioTabS
         onHelp={host.onHelp}
         getAiChannels={host.getAiChannels}
         onAiChannel={host.onAiChannel}
+        getPresentationSettings={host.getPresentationSettings}
+        onPresentationSetting={host.onPresentationSetting}
         getLibraryImportUrl={host.getLibraryImportUrl}
         libDirAbs={host.libDirAbs}
         boardDir={host.boardDir}

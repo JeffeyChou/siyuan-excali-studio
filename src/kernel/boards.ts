@@ -5,7 +5,7 @@
  * ——内核没有 React/vendor，直接生成内嵌 scene 的 SVG（Excalidraw 打开即还原）。
  *
  * 文件只允许落在保存目录（默认 assets/excali）下；同名不静默覆盖，自动 _0/_1；
- * 覆盖前滚动三份 .bak（与前端 BAK 纪律一致）。
+ * 第五十四轮起备份链退役——每块板只留一个文件，同内容（正文逐字 + 载荷语义）不落盘。
  */
 
 import { boundingBoxOf, makeElement, nextId } from "../studio/ea-element.ts";
@@ -144,8 +144,8 @@ function originOf(scene: KernelScene): { x: number; y: number } {
   return box ? { x: box.minX, y: box.maxY + 80 } : { x: 0, y: 0 };
 }
 
-async function saveScene(path: string, scene: KernelScene, settings: StudioSettings): Promise<void> {
-  await writeSvg(path, sceneToSvgHeadless(scene), settings.keepBackup);
+async function saveScene(path: string, scene: KernelScene): Promise<void> {
+  await writeSvg(path, sceneToSvgHeadless(scene));
 }
 
 function planErrorOf(e: unknown): Error {
@@ -305,7 +305,7 @@ export async function drawBoard(args: Record<string, unknown>, settings: StudioS
     created = true;
   }
 
-  await saveScene(target.path, scene, settings);
+  await saveScene(target.path, scene);
   return {
     ok: true,
     created,
@@ -382,7 +382,7 @@ export async function generateBoardImage(
   const scene = appendHeadlessElements(old, [element], files);
   if (!scene.appState.viewBackgroundColor) scene.appState.viewBackgroundColor = "#ffffff";
 
-  await saveScene(path, scene, settings);
+  await saveScene(path, scene);
   const bytes = Math.floor((image.base64.length * 3) / 4);
   return {
     ok: true,

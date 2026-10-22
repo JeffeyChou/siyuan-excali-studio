@@ -49,12 +49,39 @@ test("动作元数据：id 唯一、标题/说明是 i18n key、图标是非空 
   assert.equal(new Set(ids).size, ids.length, "id 不许重复");
   for (const a of RAIL_ACTIONS) {
     assert.ok(a.title.length > 0 && a.desc.length > 0, `${a.id} 缺标题或说明`);
+    assert.ok(typeof a.titleEn === "string" && a.titleEn.length > 0, `${a.id} 缺英文标题（竖条双语悬浮提示用）`);
     assert.match(a.icon, /^M/, `${a.id} 图标得是 svg path 数据`);
     assert.equal(railActionOf(a.id), a, "按 id 查得回来");
     assert.ok(isRailActionId(a.id));
   }
   assert.equal(railActionOf("run-any-script"), null, "未知 id 返回 null，不抛");
   assert.equal(isRailActionId(undefined), false, "脏值（含 undefined）一律不认");
+});
+
+test("2026-10-22·Obsidian 式悬浮提示：双语药丸挂每枚按钮，替掉原生 title", () => {
+  // ① 机制面：tipShow/tipHide + 400ms 延迟 + 渲染药丸 div
+  assert.match(RAIL, /const tipShow = useCallback\(\(el: HTMLElement, text: string\): void =>/, "提示出头处理器");
+  assert.match(RAIL, /window\.setTimeout\(\(\) => \{[\s\S]{0,200}setTip\(\{ text, left: r\.left - 10, top: r\.top \+ r\.height \/ 2 \}\)/, "定位于按钮左侧、垂直居中");
+  assert.match(RAIL, /\}, 400\)/, "400ms 延迟出头（指针掠过不响）");
+  assert.match(RAIL, /className="exs-rail-tip" role="tooltip"/, "药丸有正式 class 与 role");
+  // ② 覆盖面：荧光笔 / 拓展功能 / 动作 / 固定脚本 / 收进钮 / 拉手，一个不落
+  assert.equal((RAIL.match(/tipShow\(e\.currentTarget/g) ?? []).length >= 6, true, "至少六处按钮挂提示");
+  assert.match(RAIL, /tipShow\(e\.currentTarget, `\$\{t\(a\.title\)\} \/ \$\{a\.titleEn\}`\)/, "动作按钮走「中文 / English」双语");
+  assert.match(RAIL, /tipShow\(e\.currentTarget, SCRIPT_TIPS\[s\.name\] \?\? s\.title\)/, "固定脚本查双语表，用户脚本回落标题原文");
+  assert.match(RAIL, /"frame-collapse\.md": "画框折叠·展开 \/ Collapse · expand frame"/, "画框折叠的双语提示（标题自带斜杠，英文侧用 ·）");
+  assert.match(RAIL, /"selection-fold\.md": "选区折叠为列表 \/ Fold selection into a list"/, "选区折叠的双语提示");
+  // ③ 生命周期：竖条滑出/让位 → 提示跟着收（别留在画布上）；窄画布实测宽度夹左缘
+  assert.match(RAIL, /if \(railOff\) tipHide\(\);/, "收进/让位即收提示");
+  assert.match(RAIL, /const minLeft = 8 \+ el\.offsetWidth;/, "窄画布按实测宽度往内夹");
+  // ④ 原生 title 不再出现在竖条按钮上（会与药丸双弹；色板 swatch 的那几个除外）
+  const btnZone = RAIL.slice(RAIL.indexOf("exs-script-rail__btn"), RAIL.indexOf("exs-script-rail__menu"));
+  assert.equal(/title=\{/.test(btnZone), false, "竖条按钮区不许残留原生 title");
+  // ⑤ 样式面：深色药丸、fixed、z-index 9（压过画布 UI、低于思源 Dialog）、不吃指针
+  assert.match(CSS, /\.exs-rail-tip \{/, "药丸样式存在");
+  assert.match(CSS, /\.exs-rail-tip \{[^}]*position: fixed/, "fixed 定位");
+  assert.match(CSS, /\.exs-rail-tip \{[^}]*z-index: 9/, "层级 9：高于 vendor sidebar(5)、低于思源 Dialog(≥11)");
+  assert.match(CSS, /\.exs-rail-tip \{[^}]*pointer-events: none/, "提示永不抢画布指针");
+  assert.match(CSS, /\.exs-rail-tip \{[^}]*transform: translate\(-100%, -50%\)/, "右缘贴按钮左缘");
 });
 
 test("归一：白名单 + 去重 + 保序；显式空数组原样保留", () => {
@@ -98,7 +125,10 @@ test("画布：动作在自己那块画布里本地执行，钉子清单跟广�
   assert.match(APP, /const \[railActions, setRailActions\] = useState<RailActionMeta\[\]>\(\[\]\);/, "动作清单进本地状态");
   assert.match(APP, /addEventListener\(SCRIPT_PIN_EVENT, refreshPinned\)/, "沿用固定脚本那份广播（不新增事件名）");
   assert.match(APP, /\}, \[listPinnedScripts, listPinnedActions\]\);/, "重拉回调把两个通道都列进依赖");
-  assert.match(APP, /actions=\{railActions\}/, "传给竖条");
+  assert.match(APP, /actions=\{railActionsList\}/, "传给竖条");
+  assert.match(APP, /railActions\.filter\(\(a\) => railActionMount\(a\) === "rail"\)/, "竖条只拿落点=rail 的动作（钉到右上角的演示不许漏进竖条）");
+  assert.match(APP, /railActions\.some\(\(a\) => a\.id === PRESENTATION\)/, "右上角按钮只认自己那颗钉子");
+  assert.match(APP, /renderTopRightUI=\{renderTopRightUI\}/, "演示按钮走 vendor 官方右上角扩展位（不自绘 DOM）");
   assert.match(APP, /onUnpinAction=\{\(id\) => onPinAction\(id, false\)\}/, "取消固定翻回宿主");
   assert.match(APP, /onRunAction=\{runRailAction\}/, "执行走本地通道，不绕宿主活动画布");
 });
@@ -113,8 +143,13 @@ test("宿主：钉子清单落 pinnedActions 并广播；面板点动作 = 对�
   assert.match(INDEX, /showMessage\(t\("先打开一块白板，再往里插卡片"\)\)/, "没有活动画布时提示，不静默");
 });
 
-test("脚本库：画布动作小节在说明块之上，行结构照抄脚本行（样式零分叉）", () => {
-  assert.match(INDEX, /const actionBlock = `<div class="exs-picker__group">\$\{t\("画布动作"\)\}<\/div>/, "分组标题");
+test("拓展功能面板：内置动作排顶部不设组题（标题即组题），脚本列表前有「脚本库」组题", () => {
+  // 第五十一轮拆两类：面板标题 =「拓展功能」，动作区不再包组题，脚本列表前加「脚本库」
+  assert.match(INDEX, /const actionBlock = RAIL_ACTIONS\.map\(actionRow\)\.join\(""\);/, "动作区裸行拼接（无组题）");
+  assert.equal(INDEX.includes('t("画布动作")'), false, "「画布动作」组题退役（标题即组题）");
+  assert.match(INDEX, /title: t\("拓展功能"\)/, "面板标题改「拓展功能」");
+  assert.match(INDEX, /dialog\.element\.classList\.add\("exs-picker-dialog"\)/, "Apple 化 scope 类挂 Dialog 根");
+  assert.match(INDEX, /exs-picker__group">\$\{t\(\s*"脚本库",/, "脚本列表前的「脚本库」组题");
   assert.match(INDEX, /data-rail-action="\$\{escapeAttr\(/, "行标自己的 id");
   assert.match(INDEX, /const pinnedActions = new Set<string>\(this\.settings\.pinnedActions\);/, "行首固定态实时读设置");
   assert.match(INDEX, /outdatedBar\}\$\{actionBlock\}\$\{hint\}/, "小节排在说明块之上（动作是入口，说明是脚注）");
@@ -125,9 +160,11 @@ test("脚本库：画布动作小节在说明块之上，行结构照抄脚本�
   assert.ok(ctxBody.indexOf("[data-rail-action]") > -1 && ctxBody.indexOf('closest?.(".exs-script-item")') > ctxBody.indexOf("[data-rail-action]"), "右键：同样先认动作行");
   assert.match(INDEX, /if \(!isRailActionId\(id\)\) return;/, "脏 id 直接放掉");
   assert.match(INDEX, /dialog\.destroy\(\);\s*\n\s*void this\.runRailAction\(id\);/, "点动作行 = 关面板再执行（与点脚本同手感）");
-  assert.match(INDEX, /const markPinned = \(item: HTMLElement, pinned: boolean\): void => \{/, "就地刷新固定态（脚本行与动作行共用一份）");
+  assert.match(INDEX, /const markPinned = \(item: HTMLElement, pinned: boolean, topRight = false\): void => \{/, "就地刷新固定态（脚本行与动作行共用一份，落点只换措辞）");
   assert.equal((INDEX.match(/toggle\("exs-script-item--pinned"/g) ?? []).length, 1, "固定态 paint 只有一份，抄第二遍迟早分叉");
   assert.match(CSS, /\.exs-picker__group \{/, "分组标题有样式");
+  assert.match(CSS, /\.exs-picker-dialog \.b3-dialog__container \{[^}]*border-radius: 12px;/, "面板容器 Apple 圆角");
+  assert.match(CSS, /\.exs-picker-dialog \.exs-script-item__icon \{[^}]*border-radius: 6px;/, "行首图标衬底");
 });
 
 test("菜单：☰ 里的插入白板卡片撤干净，入口只剩竖条与脚本库", () => {
@@ -138,15 +175,17 @@ test("菜单：☰ 里的插入白板卡片撤干净，入口只剩竖条与脚�
 
 /* ------------------------------ ④ 文案 ------------------------------ */
 
-test("i18n：画布动作词条双语齐备，中文原文即 key", () => {
+test("i18n：拓展功能词条双语齐备，中文原文即 key", () => {
   const zh = json("i18n/zh_CN.json");
   const en = json("i18n/en_US.json");
-  const keys = ["画布动作", ...RAIL_ACTIONS.flatMap((a) => [a.title, a.desc])];
+  const keys = ["拓展功能", "拓展功能…", ...RAIL_ACTIONS.flatMap((a) => [a.title, a.desc])];
   for (const k of keys) {
     assert.ok(k in zh, `zh_CN 缺键：${k}`);
     assert.equal(zh[k], k, `值必须等于键：${k}`);
     assert.ok(en[k] && en[k] !== k, `en_US 该是真英文：${k}`);
   }
+  assert.equal("画布动作" in zh, false, "「画布动作」组题词条已随拆分退役");
+  assert.equal("运行脚本…" in zh, false, "「运行脚本…」旧入口词条已更名退役");
   assert.equal("插入白板卡片…" in zh, false, "带省略号的旧菜单词条已随 ☰ 入口退出");
   assert.equal("插入白板卡片…" in en, false, "en_US 同样不留旧词条");
 });

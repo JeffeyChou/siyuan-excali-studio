@@ -12,20 +12,21 @@
  *
  * 白板目录按「资产相对路径」解释：默认 assets/excali 实际落在 {ws}/data/assets/excali。
  * 所有结果以单行 JSON 打到 stdout（{ok:true,...} / {ok:false,error,...}），退出码 0/1。
- * 写文件前会复用插件的 BAK 三份滚动（--no-backup 关）与同名避重 _0/_1；
+ * 写文件前只做同名避重 _0/_1；第五十四轮起备份链退役——每块板在目录里只留一个文件，
+ * 列表仍排除存量 `*.bak*.svg`，兜底交给思源自己的历史/数据快照。
  * 只允许写工作空间 data/ 内、--dir 目录下的 .svg，拒绝路径穿越。
  * 第四十四轮·软门：create/append 落盘前读插件设置 aiChannels.cli，关闭即拒写（读不拦，--dry-run 不拦）。
  */
 
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { renderPlan } from "../src/studio/ai/render.ts";
 import { planToSvg } from "../src/studio/ai/headless.ts";
 import { STYLE_DIR, listStyles, loadStylePacks } from "../src/studio/ai/style-pack.ts";
 import { boundingBoxOf } from "../src/studio/ea-element.ts";
-import { decodeSvgPayload, hasNonEmptyScene } from "../src/studio/scene-codec.ts";
-import { BACKUP_KEEP, backupPathOf, isBackupPath, sanitizeFileName } from "../src/studio/storage.ts";
+import { decodeSvgPayload, sceneTextsEquivalent } from "../src/studio/scene-codec.ts";
+import { isBackupPath, sanitizeFileName } from "../src/studio/storage.ts";
 import { DEDICATED_BOARD_DIR } from "../src/studio/settings.ts";
 
 const USAGE = `Excali 白板 CLI
@@ -47,7 +48,6 @@ const USAGE = `Excali 白板 CLI
   --title <name>      create 的文件名（默认计划标题或 AI-白板）
   --board <title|path> append 的目标白板
   --id-prefix <p>     元素 id 前缀，默认 ai
-  --no-backup         追加时不滚动 .bak
   --dry-run           只渲染不写盘
   --help              显示本说明
 
@@ -265,14 +265,6 @@ async function assertCliWritable(workspace, command) {
   }
 }
 
-async function rotateBackup(file, text) {
-  for (let slot = BACKUP_KEEP - 1; slot >= 1; slot--) {
-    const older = backupPathOf(file, slot);
-    if (existsSync(older)) await copyFile(older, backupPathOf(file, slot + 1));
-  }
-  await writeFile(backupPathOf(file, 1), text, "utf8");
-}
-
 function renderOptions(args) {
   const style = typeof args.style === "string" && args.style.trim() ? args.style : args.preset;
   return {
@@ -408,12 +400,9 @@ async function main() {
       return;
     }
     await assertCliWritable(workspace, "append");
-    let backup = false;
-    if (args["no-backup"] !== true && hasNonEmptyScene(oldText)) {
-      await rotateBackup(file, oldText);
-      backup = true;
-    }
-    await writeAtomic(file, svgText);
+    // 第五十四轮：备份链退役 + 与插件同口径的等价门——空计划不许刷 mtime
+    const unchanged = sceneTextsEquivalent(oldText, svgText);
+    if (!unchanged) await writeAtomic(file, svgText);
     print(
       summary(rendered, {
         action: "append",
@@ -421,7 +410,7 @@ async function main() {
         styleWarnings: packs.warnings,
         boardTitle: basename(file).replace(/\.svg$/i, ""),
         origin,
-        backup,
+        unchanged,
         svgBytes: Buffer.byteLength(svgText),
       }),
     );

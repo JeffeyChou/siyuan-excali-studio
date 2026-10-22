@@ -59,3 +59,9 @@ test("id 自增不重复", () => {
   const b = makeElement({ type: "rectangle", x: 0, y: 0 });
   assert.notEqual(a.id, b.id);
 });
+
+test("makeElement：frameId 透传（frame-collapse 展开归框），缺省 null", () => {
+  assert.equal(makeElement({ type: "rectangle", x: 0, y: 0, frameId: "f1" }).frameId, "f1", "显式给的 frameId 原样进元素");
+  assert.equal(makeElement({ type: "rectangle", x: 0, y: 0 }).frameId, null, "普通 add* 不进框");
+  assert.equal(makeElement({ type: "text", x: 0, y: 0, frameId: null }).frameId, null, "显式 null 也认");
+});

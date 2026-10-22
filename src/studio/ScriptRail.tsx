@@ -20,6 +20,10 @@
  *
  * 纯 UI 组件：脚本列表/固定状态/视图偏好经 StudioProps 回调向宿主取（React 树里
  * 没有 SiYuan API），固定状态变更后宿主广播 window 事件，本组件监听后重拉。
+ *
+ * 2026-10-22：Obsidian 式悬浮提示——竖条每枚按钮 hover 400ms 出头一枚深色药丸
+ * （「中文 / English」双语，对标 Obsidian 命令面板的 tooltip 形态），钉在按钮
+ * 左侧往画布里展开。替掉浏览器原生 title（要盯近 1s、样式不可控、玻璃底上违和）。
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -38,6 +42,33 @@ export type ScriptRailItem = { name: string; title: string };
 const TOP_MIN = 56;
 /** 色板与竖条的间隙：色板右缘落在荧光笔按钮左缘再往左这么多 px */
 const PAL_GAP = 12;
+
+/**
+ * 固定脚本的双语悬浮提示（Obsidian 式「中文 / English」药丸）。
+ * 只登记内置脚本——用户自己写的脚本用标题原文（他的 H1 是什么就显示什么）。
+ * frame-collapse 的标题自带斜杠，英文侧用 · 隔开，免得三斜线排一列。
+ */
+const SCRIPT_TIPS: Record<string, string> = {
+  "mindmap-from-headings.md": "笔记标题 → 思维导图 / Headings to mind map",
+  "table-from-markdown.md": "Markdown 表格 → 渲染表格 / Markdown table",
+  "flowchart-from-list.md": "缩进列表 → 流程图 / List to flowchart",
+  "batch-import-images.md": "批量导入图片 / Batch import images",
+  "align-and-distribute.md": "对齐与分布 / Align & distribute",
+  "number-badges.md": "序号标注 / Number badges",
+  "smart-connect.md": "智能连线 / Smart connect",
+  "kanban-from-list.md": "任务清单 → 三列看板 / Task list to kanban",
+  "export-steps.md": "导出分步图 / Export step images",
+  "repeat-tween.md": "重复补间（选中 2 个） / Repeat tween",
+  "box-selection.md": "选区加外框 / Frame the selection",
+  "uniform-size.md": "统一尺寸（选中 2 个以上） / Uniform size",
+  "reverse-arrows.md": "反转箭头 / Reverse arrows",
+  "change-shape.md": "形状互转 / Change shape",
+  "text-numbering.md": "文字编号（按选择顺序） / Number text",
+  "highlighter.md": "荧光笔 / Highlighter",
+  "material-recipe.md": "素材配方（改色 / 重新生成） / Material recipe",
+  "selection-fold.md": "选区折叠为列表 / Fold selection into a list",
+  "frame-collapse.md": "画框折叠·展开 / Collapse · expand frame",
+};
 
 export function ScriptRail(props: {
   pinned: ScriptRailItem[];
@@ -120,6 +151,50 @@ export function ScriptRail(props: {
   //   拉手浮上去正是被投诉的那个遮挡）。
   const railOff = props.railCollapsed || props.pickerOpen || props.sidebarOpen;
   const handleShow = railOff && !props.sidebarOpen;
+
+  /*
+   * 2026-10-22：Obsidian 式悬浮提示。深色药丸 + 双语，fixed 定位于按钮左侧
+   * （竖条贴右缘，提示往画布展开；translate(-100%) 让药丸右缘离按钮 10px）。
+   * 400ms 延迟出头——指针掠过不响，停住才说；离开/滑出/让位即收。
+   */
+  const [tip, setTip] = useState<{ text: string; left: number; top: number } | null>(null);
+  const tipRef = useRef<HTMLDivElement | null>(null);
+  const tipTimer = useRef<number | null>(null);
+
+  const tipShow = useCallback((el: HTMLElement, text: string): void => {
+    if (tipTimer.current !== null) window.clearTimeout(tipTimer.current);
+    tipTimer.current = window.setTimeout(() => {
+      const r = el.getBoundingClientRect();
+      setTip({ text, left: r.left - 10, top: r.top + r.height / 2 });
+    }, 400);
+  }, []);
+
+  const tipHide = useCallback((): void => {
+    if (tipTimer.current !== null) window.clearTimeout(tipTimer.current);
+    tipTimer.current = null;
+    setTip(null);
+  }, []);
+
+  // 画布很窄时药丸会顶出左缘：渲染后实测宽度往内夹（-100% 变换后左缘 = left - width）
+  useEffect(() => {
+    const el = tipRef.current;
+    if (!tip || !el) return;
+    const minLeft = 8 + el.offsetWidth;
+    if (tip.left < minLeft) setTip((prev) => (prev && prev.left < minLeft ? { ...prev, left: minLeft } : prev));
+  }, [tip]);
+
+  // 竖条滑出 / 被脚本选择器或 vendor 侧栏让位 → 提示跟着收，别留在画布上
+  useEffect(() => {
+    if (railOff) tipHide();
+  }, [railOff, tipHide]);
+
+  // 卸载清定时器（防 setState on unmounted component）
+  useEffect(
+    () => () => {
+      if (tipTimer.current !== null) window.clearTimeout(tipTimer.current);
+    },
+    [],
+  );
 
   /*
    * 第三十八轮：荧光笔色板。
@@ -287,7 +362,7 @@ export function ScriptRail(props: {
         role="toolbar"
         aria-label={t("脚本侧边栏")}
         aria-hidden={railOff}
-        title={t("按住空白处可拖动")}
+        onScroll={tipHide}
         onPointerDown={onPointerDown}
         style={{ top: topStyle }}
       >
@@ -296,25 +371,37 @@ export function ScriptRail(props: {
           type="button"
           className={"exs-script-rail__btn exs-hl-btn" + (props.hlActive ? " exs-hl-btn--on" : "")}
           style={{ ["--exs-hl-color" as string]: props.highlighter.color } as React.CSSProperties}
-          title={props.hlActive ? t("荧光笔（已激活，再点换色）") : t("荧光笔")}
           aria-label={t("荧光笔")}
           aria-pressed={props.hlActive}
+          onMouseEnter={(e) => tipShow(e.currentTarget, props.hlActive ? t("荧光笔（已激活，再点换色）") + " / Highlighter active" : t("荧光笔") + " / Highlighter")}
+          onMouseLeave={tipHide}
           onClick={onHlBtnClick}
         >
           <LineIcon d={ICON_HIGHLIGHTER} size={17} />
           <span className="exs-hl-btn__chip" aria-hidden="true" />
         </button>
-        <div className="exs-script-rail__divider" />
+        <div
+          className="exs-script-rail__divider"
+          onMouseEnter={(e) => tipShow(e.currentTarget, t("按住空白处可拖动") + " / Drag to move")}
+          onMouseLeave={tipHide}
+        />
         <button
           type="button"
           className="exs-script-rail__btn"
-          title={t("运行脚本…")}
-          aria-label={t("运行脚本…")}
+          aria-label={t("拓展功能…")}
+          onMouseEnter={(e) => tipShow(e.currentTarget, t("拓展功能…") + " / Scripts & tools")}
+          onMouseLeave={tipHide}
           onClick={props.onOpenPicker}
         >
           <LineIcon d={ICON_SCRIPT} size={17} />
         </button>
-        {props.actions.length + props.pinned.length > 0 ? <div className="exs-script-rail__divider" /> : null}
+        {props.actions.length + props.pinned.length > 0 ? (
+          <div
+            className="exs-script-rail__divider"
+            onMouseEnter={(e) => tipShow(e.currentTarget, t("按住空白处可拖动") + " / Drag to move")}
+            onMouseLeave={tipHide}
+          />
+        ) : null}
         {/* 第四十一轮：画布动作排在固定脚本前面（内置能力在上，用户自己钉的在下）
             第四十五轮：仅外框颜色点开的是本地色板，不走 onRunAction 的「立即执行」通道 */}
         {props.actions.map((a) => (
@@ -325,9 +412,10 @@ export function ScriptRail(props: {
             className={
               "exs-script-rail__btn" + (a.id === OUTLINE_COLOR && outlineAnchor ? " exs-script-rail__btn--active" : "")
             }
-            title={t(a.title)}
             aria-label={t(a.title)}
             aria-expanded={a.id === OUTLINE_COLOR ? outlineAnchor !== null : undefined}
+            onMouseEnter={(e) => tipShow(e.currentTarget, `${t(a.title)} / ${a.titleEn}`)}
+            onMouseLeave={tipHide}
             onClick={(e) => {
               if (a.id === OUTLINE_COLOR) {
                 if (outlineAnchor) setOutlineAnchor(null);
@@ -346,20 +434,26 @@ export function ScriptRail(props: {
             key={s.name}
             type="button"
             className="exs-script-rail__btn"
-            title={s.title}
             aria-label={s.title}
+            onMouseEnter={(e) => tipShow(e.currentTarget, SCRIPT_TIPS[s.name] ?? s.title)}
+            onMouseLeave={tipHide}
             onClick={(e) => props.onRunScript(s.name, { shift: e.shiftKey, at: { x: e.clientX, y: e.clientY } })}
             onContextMenu={(e) => openMenu(e, "script", s.name)}
           >
             <LineIcon d={SCRIPT_ICONS[s.name] ?? ICON_SCRIPT_GEAR} size={17} />
           </button>
         ))}
-        <div className="exs-script-rail__divider" />
+        <div
+          className="exs-script-rail__divider"
+          onMouseEnter={(e) => tipShow(e.currentTarget, t("按住空白处可拖动") + " / Drag to move")}
+          onMouseLeave={tipHide}
+        />
         <button
           type="button"
           className="exs-script-rail__btn"
-          title={t("收进边缘")}
           aria-label={t("收进边缘")}
+          onMouseEnter={(e) => tipShow(e.currentTarget, t("收进边缘") + " / Collapse rail")}
+          onMouseLeave={tipHide}
           onClick={props.onToggleRailCollapsed}
         >
           <LineIcon d={ICON_CHEVRON_RIGHT} size={16} />
@@ -459,9 +553,12 @@ export function ScriptRail(props: {
       {/* 收进态拉手：贴边半露，点按弹回（全手动，无自动收进） */}
       <div
         className={"exs-script-rail-handle" + (handleShow ? " exs-script-rail-handle--show" : "")}
-        title={t("展开脚本侧边栏")}
         aria-hidden={!handleShow}
         style={{ top: topStyle }}
+        onMouseEnter={(e) => {
+          if (handleShow) tipShow(e.currentTarget, t("展开脚本侧边栏") + " / Show rail");
+        }}
+        onMouseLeave={tipHide}
         onClick={() => {
           if (props.railCollapsed) props.onToggleRailCollapsed();
         }}
@@ -470,6 +567,13 @@ export function ScriptRail(props: {
         <span className="exs-script-rail-handle__dot" />
         <span className="exs-script-rail-handle__dot" />
       </div>
+      {/* 2026-10-22：Obsidian 式悬浮提示药丸（fixed、按钮左侧、pointer-events:none
+          永不抢指针）。z-index 9 = 压过画布 UI（vendor sidebar 5）、低于思源 Dialog（≥11） */}
+      {tip ? (
+        <div ref={tipRef} className="exs-rail-tip" role="tooltip" style={{ left: tip.left, top: tip.top }}>
+          {tip.text}
+        </div>
+      ) : null}
     </>
   );
 }

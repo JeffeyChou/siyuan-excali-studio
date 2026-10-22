@@ -165,6 +165,54 @@ function unwrapPayload(outer: Record<string, unknown>): Record<string, unknown> 
   return inner as Record<string, unknown>;
 }
 
+/**
+ * 第五十四轮：两份 SVG 的**语义**比较（同一段 scene 的两份文本可能字节不同）。
+ *
+ * 起因是实测：一块板什么都没编辑，重开后磁盘上仍会多一次覆盖写。差异全来自
+ * vendor 的归一化——`boundElements: null` 读回来变 `[]`、缺省键被补齐。字节比
+ * 一定不等，于是每次保存都刷一次 mtime（多端同步跟着抖、最近列表跟着跳）。
+ *
+ * 这里把载荷规范化成一根可比的串：
+ * - 递归丢键（按名排序，键序变化不算差异）、丢掉值为 null/undefined 的键
+ *   （Excalidraw 里「没有这个键」和「显式 null」同义）；
+ * - `boundElements` 的空数组等同于缺键（归一化的主要产物）；
+ * - 解不出载荷回 null，调用方按「判不了就写」处理，绝不因为比较失败而丢改动。
+ */
+function canonicalScene(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalScene);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    const src = value as Record<string, unknown>;
+    for (const key of Object.keys(src).sort()) {
+      const v = src[key];
+      if (v === null || v === undefined) continue;
+      if (key === "boundElements" && Array.isArray(v) && v.length === 0) continue;
+      out[key] = canonicalScene(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+/** SVG 文本 → 载荷的语义签名；解不出（不是白板 / 载荷坏了）返回 null */
+export function sceneSemanticsOf(svgText: string): string | null {
+  if (!hasEmbeddedScene(svgText)) return null;
+  try {
+    const scene = decodeSvgPayload(svgText);
+    return JSON.stringify(canonicalScene({ elements: scene.elements, appState: scene.appState, files: scene.files }));
+  } catch {
+    return null;
+  }
+}
+
+/** 两份落盘文本是否语义等价（任一侧解不出都算不等，交给调用方照常写） */
+export function sceneTextsEquivalent(a: string, b: string): boolean {
+  if (a === b) return true;
+  const sa = sceneSemanticsOf(a);
+  const sb = sceneSemanticsOf(b);
+  return sa !== null && sa === sb;
+}
+
 /* ---------------------- 编码侧（第二十六轮 T1） ----------------------
  * 过去编码全交给 vendor（exportToSvg + exportEmbedScene），vendor 会把 files 的
  * dataURL 原样塞进载荷——图片内嵌正是文件膨胀 2.1 倍的根源。T1 起「预览交给

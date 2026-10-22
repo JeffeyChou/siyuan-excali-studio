@@ -155,7 +155,7 @@ test("B·共享核心：前端与 CLI 用同一份 render/layout，前端绑定�
   assert.match(CLI, /idPrefix/, "CLI 支持自定义 id 前缀");
 });
 
-test("B·CLI：真实 data/ 目录口径 + BAK 纪律 + 原子写 + dry-run", () => {
+test("B·CLI：真实 data/ 目录口径 + 一块板一个文件 + 原子写 + dry-run", () => {
   assert.ok(CLI.startsWith("#!/usr/bin/env -S node --experimental-strip-types"), "shebang 要能直接执行");
   assert.match(CLI, /DEDICATED_BOARD_DIR/, "默认目录与插件设置同源");
   assert.match(CLI, /join\(workspace, "data"\)/, "资产路径落在 data/ 下");
@@ -163,10 +163,11 @@ test("B·CLI：真实 data/ 目录口径 + BAK 纪律 + 原子写 + dry-run", ()
   assert.match(CLI, /function boardPathCandidates/, "路径同时接受资产 ref 与 data/ 前缀");
   assert.match(CLI, /decodeSvgPayload\(oldText\)/, "追加前必须解码校验");
   assert.match(CLI, /不是有效的 Excali 场景，拒绝覆盖/, "坏场景不覆盖");
-  assert.match(CLI, /hasNonEmptyScene\(oldText\)/, "空场景不污染备份链");
-  assert.match(CLI, /for \(let slot = BACKUP_KEEP - 1; slot >= 1; slot--\)/, "三份滚动");
+  // 第五十四轮：写侧只留一份文件——既不滚 .bak，同内容也不重写
+  assert.match(CLI, /sceneTextsEquivalent\(oldText, svgText\)/, "等价门");
+  assert.match(CLI, /if \(!unchanged\) await writeAtomic\(file, svgText\)/, "等价就不落盘");
+  assert.equal(/rotateBackup|BACKUP_KEEP|backupPathOf/.test(CLI), false, "备份写侧代码不许残留在 CLI");
   assert.match(CLI, /args\["dry-run"\]/, "dry-run 分支");
-  assert.match(CLI, /args\["no-backup"\] !== true/, "--no-backup 开关");
   assert.match(CLI, /const tmp = `\$\{file\}\.tmp-\$\{process\.pid\}`;[\s\S]{0,120}await rename\(tmp, file\)/, "原子写");
   assert.match(CLI, /uniqueBoardPath/, "同名 _0/_1 避重");
   assert.match(CLI, /if \(rendered\.specs\.some\(\(spec\) => spec\.id && ids\.has\(spec\.id\)\)\)/, "追加撞 id 换前缀");

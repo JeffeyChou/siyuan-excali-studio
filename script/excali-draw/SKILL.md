@@ -35,7 +35,7 @@ node "$CLI" list --workspace "$WS" --list-styles
 # 2) 新建（默认落在 assets/excali；同名自动 _0/_1）
 node "$CLI" create --workspace "$WS" --plan /tmp/plan.json [--title 文件名] [--style 风格包名]
 
-# 3) 追加到已有白板（按标题或路径；写前滚动 3 份 .bak）
+# 3) 追加到已有白板（按标题或路径；每块板只留一个文件，不再滚动 .bak）
 node "$CLI" append --workspace "$WS" --board "已有白板标题" --plan /tmp/plan.json
 ```
 
@@ -125,15 +125,15 @@ node "$CLI" create ... --style-dir /绝对路径/目录          # 临时读别�
 1. 明确要「新建」还是「追加」。追加先 `list` 找到准确标题。
 2. 把计划写成临时 JSON 文件（比 shell 引号安全）。
 3. 先 `--dry-run` 校验，再真正执行。
-4. 读 JSON 结果：`path`、`nodes`、`edges`、`warnings`、`backup`；用了风格包再看 `styleWarnings`（非空说明有包没加载上，得告诉用户）。
+4. 读 JSON 结果：`path`、`nodes`、`edges`、`warnings`、`unchanged`（计划没改变内容时为 true，文件未被重写）；用了风格包再看 `styleWarnings`（非空说明有包没加载上，得告诉用户）。
 5. 告诉用户文件路径；让用户在思源里打开。新建文件若 dock 没立刻出现，用「打开白板…/选择器」或在白板库里刷新。
 
 ## 并发与安全（必须遵守）
 
 - **白板正开在思源里时不要直接 append**：编辑器停手约 1 秒就会自动保存，会覆盖 CLI 写入。先让用户关闭该页签，或改用思源内置智能体的 `excali_draw_board` 能力（那条通道在画布里实时绘制）。
 - 只写工作空间内、`assets/excali`（或 `--dir` 指定目录）下的 `.svg`；CLI 会拒绝路径穿越。
-- 不要手改 `.bak*` 文件；追加失败/解码失败时 CLI 会拒绝覆盖。
-- 默认会滚动 `<名>.svg.bak.svg`、`.bak2`、`.bak3` 三份；只有非空场景才入链。
+- 存量 `.bak*` 是老版本留下的备份档，CLI 不会新建、列表里也会排除；追加失败/解码失败时 CLI 会拒绝覆盖。
+- 第五十四轮起备份链退役：每块板在目录里只留一个文件，写坏的兜底交给思源自己的历史/数据快照。
 
 ## 失败处理
 

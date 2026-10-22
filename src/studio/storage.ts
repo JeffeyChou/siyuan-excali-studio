@@ -8,7 +8,6 @@
  */
 
 // 相对导入带 .ts 后缀：本模块被 node --experimental-strip-types 的测试直接 import
-import { hasNonEmptyScene } from "./scene-codec.ts";
 
 /** 归一化到 /data/... 形式：/data/x → 原样；data/x → 补前导斜杠；x → 加 /data/ */
 export function toDataPath(relative: string): string {
@@ -74,9 +73,14 @@ export function sanitizeFileName(input: string, fallback = "excali-board.svg"): 
 }
 
 /**
- * 2026-10-17 第十九轮：备份从单格改成滚动多份。
- * 槽 1 沿用旧名 `<名>.svg.bak.svg`（存量 .bak 直接归进新链条），之后 `.bak2`、`.bak3`。
- * 一次误操作最多回退三版——Obsidian 只留一份，我们留三份是因为思源删除没有回收站。
+ * 备份链条的**读侧**（第五十四轮起插件不再写 `.bak`，这里只服务存量档）。
+ *
+ * 命名口径沿用第十九轮：槽 1 是 `<名>.svg.bak.svg`，之后 `.bak2`、`.bak3`。
+ * 为什么留着不删：
+ * - 集市上已发布的版本在用户库里滚出了真档，坏板自救（`restoreFromBackup`）、
+ *   删除白板、重命名搬家三条路都要能认出并清掉它们；
+ * - 白板库列表必须过滤 `.bak*`，否则存量链条会继续把库灌满。
+ * 新写的文件不会再有第二个。
  */
 export const BACKUP_KEEP = 3;
 
@@ -220,8 +224,9 @@ export async function listBoardFiles(dir: string): Promise<string[]> {
  * 第三十轮：按扩展名列目录下的文件（图形模板库等资源池用）。
  * 与 listBoardEntries 同一套 readDir 口径，只是不筛 .svg、不排修改时间、
  * 不排除备份链（调用方自己拿正则卡扩展名）。
+ * ext 省略 = 列全部文件（脚本 API host.listFiles 用：脚本侧自己按需过滤）。
  */
-export async function listFilesWithExt(dir: string, ext: RegExp): Promise<string[]> {
+export async function listFilesWithExt(dir: string, ext?: RegExp): Promise<string[]> {
   const rel = dir.trim().replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
   const base = rel === "" ? "assets" : rel;
   const rows = await fileApi<Array<{ name?: string; isDir?: boolean }>>(
@@ -230,7 +235,7 @@ export async function listFilesWithExt(dir: string, ext: RegExp): Promise<string
   );
   return Array.isArray(rows)
     ? rows
-        .filter((r) => r && r.isDir !== true && typeof r.name === "string" && ext.test(r.name as string))
+        .filter((r) => r && r.isDir !== true && typeof r.name === "string" && (!ext || ext.test(r.name as string)))
         .map((r) => `${base}/${r.name as string}`)
     : [];
 }
@@ -243,8 +248,8 @@ export async function removeSvg(dataPath: string): Promise<void> {
 /**
  * 重命名 = 读旧内容 → 写新路径 → 删旧路径（不依赖 renameFile，
  * 行为对插件完全可控）。调用方负责把引用方（文档）的事后处理。
- * 第十九轮：备份链条跟着搬——改名后留着旧名 .bak 就成了看不见（列表已排除
- * .bak）、删不掉（删除计划按新名算）、也恢复不到（恢复链按新名找）的孤档。
+ * 存量备份链跟着搬——插件已不再写 `.bak`，但老用户库里还有：留在旧名下就是
+ * 看不见（列表已排除 .bak）、删不掉（删除计划按新名算）、也恢复不到（恢复链按新名找）的孤档。
  */
 export async function renameSvg(oldPath: string, newPath: string): Promise<string> {
   const old = toDataPath(oldPath);
@@ -264,40 +269,6 @@ export async function renameSvg(oldPath: string, newPath: string): Promise<strin
     }
   }
   return saved;
-}
-
-/**
- * 覆盖保存前的滚动备份（第十九轮）：旧内容进链条槽 1，槽 1→2、2→3、最旧挤出。
- * 两道纪律对齐 Obsidian：
- * - 入链门：旧版必须解得出非空场景——坏文件/空画板没有恢复价值，更不该把
- *   上一次好备份挤出链条（自动保存的空场景守卫在画板侧，这里是落盘侧的兜底）；
- * - best-effort：任何一步失败只记日志，备份坏了不能把用户的保存带崩。
- */
-export async function writeBackup(dataPath: string, currentText?: string): Promise<void> {
-  try {
-    const target = toDataPath(dataPath);
-    const text = currentText ?? (await getFileText(target));
-    if (!hasNonEmptyScene(text)) return;
-    // 槽 1 已经是这一版就跳过：同一内容重复入链会把三档恢复点压成一份，
-    // 更早的好版本反而被挤掉（保存链路读回比对失败时的兜底）。
-    try {
-      if ((await getFileText(backupPathOf(target, 1))) === text) return;
-    } catch {
-      // 槽 1 还不存在，正常往下滚
-    }
-    // 从旧往新挪（先 2→3 再 1→2），挪砸了顶多多一份重复，不会丢最新备份
-    for (let slot = BACKUP_KEEP - 1; slot >= 1; slot--) {
-      try {
-        const older = await getFileText(backupPathOf(target, slot));
-        await putSvg(backupPathOf(target, slot + 1), older);
-      } catch {
-        // 这一档还不存在，没有要挪的
-      }
-    }
-    await putSvg(backupPathOf(target, 1), text);
-  } catch (e) {
-    console.warn("[excali-studio] 写 .bak 失败（忽略）", e);
-  }
 }
 
 /** 2026-10-15 阶段 B：写文本文件（图库 JSON 用） */

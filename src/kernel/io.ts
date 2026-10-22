@@ -8,11 +8,12 @@
  * - 写：/api/file/putFile + 手工 multipart（TextEncoder + Uint8Array）
  * - 删：/api/file/removeFile
  *
- * 写盘纪律与前端一致：覆盖前滚动三份 .bak（只收非空 scene），失败 best-effort。
+ * 写盘纪律与前端一致：同内容不重复落盘（正文逐字 + 载荷语义两道等价判定），
+ * 备份链已于第五十四轮退役——白板库每块板只留一个文件。
  */
 
-import { hasNonEmptyScene } from "../studio/scene-codec.ts";
-import { BACKUP_KEEP, backupPathOf, fileNameOf, toDataPath } from "../studio/storage.ts";
+import { sceneTextsEquivalent } from "../studio/scene-codec.ts";
+import { fileNameOf, toDataPath } from "../studio/storage.ts";
 
 declare const siyuan: any;
 
@@ -148,38 +149,8 @@ export async function removeFile(dataPath: string): Promise<void> {
   await jsonApi("/api/file/removeFile", { path: toDataPath(dataPath) });
 }
 
-/**
- * 覆盖前滚动备份：旧内容进槽 1，槽 1→2、2→3，最旧挤出。
- * 入链门与前端一致（只收能解出非空 scene 的旧版）；任何一步失败只记日志，
- * 不能把调用方的保存带崩。
- */
-export async function writeBackup(dataPath: string, currentText?: string): Promise<void> {
-  try {
-    const target = toDataPath(dataPath);
-    const text = currentText ?? (await readText(target));
-    if (!hasNonEmptyScene(text)) return;
-    // 同一版重复入链会把三档恢复点压成一份（与前端 storage.writeBackup 同口径）
-    try {
-      if ((await readText(backupPathOf(target, 1))) === text) return;
-    } catch {
-      // 槽 1 还不存在
-    }
-    for (let slot = BACKUP_KEEP - 1; slot >= 1; slot--) {
-      try {
-        const older = await readText(backupPathOf(target, slot));
-        await writeText(backupPathOf(target, slot + 1), older);
-      } catch {
-        // 这一档还不存在
-      }
-    }
-    await writeText(backupPathOf(target, 1), text);
-  } catch (e) {
-    console.warn("[excali-studio/kernel] 写 .bak 失败（忽略）", e);
-  }
-}
-
-/** 写 SVG：内容有变才覆盖（覆盖前按设置滚动备份） */
-export async function writeSvg(relPath: string, text: string, keepBackup: boolean): Promise<void> {
+/** 写 SVG：内容有变才覆盖（正文逐字与载荷语义两道等价判定，与前端 saveSvg 同口径） */
+export async function writeSvg(relPath: string, text: string): Promise<void> {
   const target = toDataPath(relPath);
   let current: string | null = null;
   try {
@@ -187,9 +158,7 @@ export async function writeSvg(relPath: string, text: string, keepBackup: boolea
   } catch {
     // 文件还不存在，直接新建
   }
-  // 导出是确定性的：同内容再写一遍只会刷 mtime、并挤掉备份链里的旧版本
-  if (current === text) return;
-  if (keepBackup && current !== null) await writeBackup(target, current);
+  if (current !== null && sceneTextsEquivalent(current, text)) return;
   await writeText(target, text, "image/svg+xml");
 }
 

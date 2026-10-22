@@ -40,6 +40,7 @@ export const SCRIPT_SETTING_SPECS: Record<string, ScriptSettingSpec[]> = {
         { value: "3", label: t("罗马小写（i. ii. iii.）") },
         { value: "4", label: t("字母大写（A. B. C.）") },
         { value: "5", label: t("字母小写（a. b. c.）") },
+        { value: "6", label: t("无序列表（• • •）") },
       ],
     },
   ],
@@ -286,10 +287,10 @@ const TABLE_SCRIPT = `# Markdown 表格 → 渲染表格
 \`\`\`js
 // 来源①：画布选中的文本元素（含竖线才算 Markdown 表格草稿）
 const sourceIds = ea.getSelectedElements();
-const selTexts = sourceIds
+const consumed = sourceIds
   .map((id) => ea.getElement(id))
-  .filter((el) => el && el.type === "text" && typeof el.text === "string" && el.text.includes("|"))
-  .map((el) => el.text);
+  .filter((el) => el && el.type === "text" && typeof el.text === "string" && el.text.includes("|"));
+const selTexts = consumed.map((el) => el.text);
 const fromCanvas = selTexts.length > 0;
 
 const table = fromCanvas
@@ -324,9 +325,7 @@ if (!table) {
   };
 
   // 来源①：表格画在原文本元素的位置（原地替换）；来源②：从 (40, 40) 起画
-  const originEl = fromCanvas
-    ? sourceIds.map((id) => ea.getElement(id)).find((e) => e && e.type === "text")
-    : null;
+  const originEl = fromCanvas ? consumed[0] : null;
   const ox = originEl ? originEl.x : 40;
   const oy = originEl ? originEl.y : 40;
 
@@ -351,7 +350,7 @@ if (!table) {
   rows.forEach((r) => drawRow(r, false));
 
   if (fromCanvas) {
-    ea.deleteElements(sourceIds); // 原文本已被表格取代
+    ea.deleteElements(consumed.map((el) => el.id)); // 原文本已被表格取代（只删吃掉的草稿，同选的其它元素不动）
     ea.notify("表格已生成（原文本已删，误删可 Ctrl+Z 撤回）");
   } else {
     ea.notify("表格已生成");
@@ -838,13 +837,13 @@ ea.notify("已换形 " + createdIds.length + " 个" + (skippable.size ? "（跳�
 
 const NUMBERING_SCRIPT = `# 文字编号（按选择顺序）
 
-给选中的文字前面加序号——1. 2. 3. / I. II. III. / A. B. C. 都行。
+给选中的文字前面加序号——1. 2. 3. / I. II. III. / A. B. C. / • 列表都行。
 **直接点按钮** = 按脚本库 ⚙ 设置里的格式编号（默认数字）；选中的文字全都带编号时再点一次 = 全部去掉编号；
 **按住 Shift 点按钮** = 弹出格式菜单自选（预勾选当前默认格式，点空白 = 不动）；
 用 Shift 逐个点选文字，点选顺序就是编号顺序（拖框选择不保证顺序）。
 
 \`\`\`js
-const PREFIX_RE = /^\\s*(\\d{1,3}|[IVXLCDM]+|[ivxlcdm]+|[A-Za-z])[.、)．:：]\\s*/;
+const PREFIX_RE = /^\\s*(?:(\\d{1,3}|[IVXLCDM]+|[ivxlcdm]+|[A-Za-z])[.、)．:：]|[•◦‣▪·])\\s*/;
 const ids = ea.getSelectedElements();
 const texts = ids
   .map((id) => ea.getElement(id))
@@ -865,6 +864,7 @@ if (ea.getModifiers().shift) {
       { value: "3", label: "罗马小写", hint: "i. ii. iii." },
       { value: "4", label: "字母大写", hint: "A. B. C." },
       { value: "5", label: "字母小写", hint: "a. b. c." },
+      { value: "6", label: "无序列表", hint: "• • •" },
     ],
     current: String(ea.getScriptSetting("format", "1")),
   });
@@ -878,7 +878,7 @@ if (ea.getModifiers().shift) {
 } else {
   // 不按 Shift 且存在无编号文字 = 按脚本库设置直跑（getScriptSetting 已校验，脏值回落默认 "1"）
   const parsed = parseInt(String(ea.getScriptSetting("format", "1")), 10);
-  fmt = [1, 2, 3, 4, 5].includes(parsed) ? parsed : 1;
+  fmt = [1, 2, 3, 4, 5, 6].includes(parsed) ? parsed : 1;
 }
 const toRoman = (n) => {
   const tab = [[1000,"M"],[900,"CM"],[500,"D"],[400,"CD"],[100,"C"],[90,"XC"],[50,"L"],[40,"XL"],[10,"X"],[9,"IX"],[5,"V"],[4,"IV"],[1,"I"]];
@@ -896,6 +896,7 @@ const prefixOf = (n) =>
   fmt === 3 ? toRoman(n).toLowerCase() + "." :
   fmt === 4 ? toAlpha(n) + "." :
   fmt === 5 ? toAlpha(n).toLowerCase() + "." :
+  fmt === 6 ? "•" :
   n + ".";
 for (let i = 0; i < texts.length; i++) {
   const body = String(texts[i].text ?? "").replace(PREFIX_RE, "");
@@ -1033,6 +1034,149 @@ ea.notify("已按配方重做：" + changes.join("，"));
 \`\`\`
 `;
 
+const SELECTION_FOLD_SCRIPT = `# 选区折叠为列表
+
+把框选的一批元素折成一条「列表项」：**最上面的文本当折叠头**，其余整体收进它的
+自定义字段，画布上只剩头 + 头左侧的圆点控制钮。点头（圆点）= 收起 / 展开，
+带淡入淡出动画；每一步都能 ⌘Z 撤销，存盘后折叠状态不丢。
+
+三种跑法（同一个按钮，脚本自己看状态分流）：
+1. **折叠**：框选「头 + 所有下属元素」→ 跑一次 → 成员收进头，只剩头 + 圆点；
+2. **恢复原样**：选中折叠头（单选它就够，不用再框选下属）→ 再跑一次 →
+   快照成员全部回到画布、头上的折叠字段被清除——和折叠前一模一样，圆点也消失；
+   画布上只有一个折叠时，不选任何东西直接点按钮也行（按钮即开关）；
+3. **日常收放**：之后不再用脚本，点头部左侧圆点即可（收起/展开切换，带动画）。
+
+与「画框折叠」的分工：那个把元素收进画框（frame，整块场景收放）；本脚本把元素
+收进普通文本（列表收放，不占画布结构）。两者可同时用。
+
+已知边界（演示版）：成员还原后 z 序置顶（列表元素不重叠，无感）；成员自带的
+自定义字段（如素材配方）不保留——普通元素无损。解散时快照里已在画布上的成员
+不会重复插入（防同 id 两个元素）。
+
+\`\`\`js
+const ids = ea.getSelectedElements();
+let els = ids.map((id) => ea.getElement(id)).filter((e) => e && e.isDeleted !== true);
+const allHeads = ea.getElements().filter(
+  (e) => e.excaliToggle && typeof e.excaliToggle.collapsed === "boolean" && e.isDeleted !== true,
+);
+// 没选区也允许「再点一次」：画布上恰好只有一个折叠时，它就是这次的目标
+if (els.length === 0 && allHeads.length === 1) els = allHeads.slice();
+
+// ① 消除模式：选区里已有折叠头（折叠态或展开态都算）→ 解散，恢复原样
+const heads = els.filter(
+  (e) => e.excaliToggle && typeof e.excaliToggle.collapsed === "boolean",
+);
+if (heads.length > 0) {
+  const alive = new Set(ea.getElements().map((e) => e.id));
+  let restored = 0;
+  for (const h of heads) {
+    const snap = h.excaliToggle;
+    if (snap.collapsed && Array.isArray(snap.elements)) {
+      // 折叠态：快照成员回场（已在场的不重复加，防同 id 两元素）
+      const missing = snap.elements.filter((m) => !alive.has(m.id));
+      if (missing.length > 0) ea.addElements(missing);
+      restored += missing.length;
+    }
+    // 展开态的成员本就在画布上，只差清字段。undefined：内存里即时失效，
+    // 存盘时 JSON.stringify 直接丢掉这个键——完全无痕
+    ea.setStyle([h.id], { excaliToggle: undefined });
+  }
+  ea.notify(
+    "已恢复原样：" + heads.length + " 个折叠已消除" +
+      (restored > 0 ? "，" + restored + " 个成员回到画布" : "（成员已在画布上）"),
+  );
+} else if (els.length < 2) {
+  ea.notify(
+    allHeads.length > 1
+      ? "画布上有 " + allHeads.length + " 个折叠：先选中要恢复的那个折叠头（单选即可），再跑一次"
+      : "先框选至少 2 个元素：最上面的当折叠头，其余收进它",
+  );
+} else {
+  // ② 折叠模式：最上的文本当头，其余收进快照后删除（先存后删防数据丢失）
+  els.sort((a, b) => a.y - b.y || a.x - b.x);
+  const head = els.find((e) => e.type === "text") ?? els[0];
+  const members = els.filter((e) => e.id !== head.id);
+  ea.setStyle([head.id], {
+    excaliToggle: {
+      collapsed: true,
+      elements: members.map((m) => JSON.parse(JSON.stringify(m))),
+    },
+  });
+  ea.deleteElements(members.map((m) => m.id));
+  const label = typeof head.text === "string" && head.text.trim() ? head.text.trim().slice(0, 12) : "元素";
+  ea.notify("已把 " + members.length + " 个元素收进「" + label + "」，点头部左侧圆点展开 / 收起；再跑一次本脚本可恢复原样");
+}
+\`\`\`
+`;
+
+const FRAME_COLLAPSE_SCRIPT = `# 画框折叠 / 展开
+
+选中一个画框（frame）后运行。**折叠** = 把框内元素整体收进画框的
+自定义字段、画框缩成标签条；**展开** = 原样还原。可反复切换，
+每一步都进撤销栈（⌘Z 可退），存盘后折叠状态不丢（成员在快照里）。
+
+机制：快照 \`excaliCollapsed\` 挂在画框元素上（引擎 restore 的
+\`...element\` 展开保证自定义字段往返存活），成员以绝对坐标深拷贝，
+展开时按画框位移量整体平移归位、并重新挂回画框（frameId）。
+
+已知边界（演示版）：成员还原后 frameId 会补挂，但自带自定义字段
+（如素材配方 excaliRecipe）或绑定关系（绑定文字/箭头 boundElements）
+不保留——普通元素无损。
+
+\`\`\`js
+const sel = ea.getSelectedElements().map((id) => ea.getElement(id)).filter(Boolean);
+const frame = sel.find((e) => e.type === "frame");
+if (!frame) {
+  ea.notify("请先选中一个画框：点画框的边框/标签选中它（不要点进框内空白）");
+} else {
+  const snap = frame.excaliCollapsed;
+  if (snap && Array.isArray(snap.elements) && snap.elements.length > 0) {
+    // ---------- 展开 ----------
+    const dx = frame.x - (snap.fx ?? frame.x);
+    const dy = frame.y - (snap.fy ?? frame.y);
+    ea.addElements(
+      snap.elements.map((e) => ({ ...e, frameId: frame.id, x: e.x + dx, y: e.y + dy })),
+    );
+    ea.setStyle([frame.id], {
+      excaliCollapsed: null,
+      width: snap.fw ?? frame.width,
+      height: snap.fh ?? frame.height,
+      name: snap.name ?? null,
+    });
+    ea.notify("已展开 " + snap.elements.length + " 个元素归位");
+  } else {
+    // ---------- 折叠 ----------
+    const members = ea
+      .getElements()
+      .filter((e) => e.frameId === frame.id && e.id !== frame.id && e.isDeleted !== true);
+    if (members.length === 0) {
+      ea.notify("这个画框是空的：往里拖元素（或框选后建组）才会归框");
+    } else {
+      // 必须先存快照再删成员——反了的话中途失败就是数据丢失
+      const payload = {
+        name: frame.name ?? null,
+        fw: frame.width,
+        fh: frame.height,
+        fx: frame.x,
+        fy: frame.y,
+        elements: JSON.parse(JSON.stringify(members)),
+      };
+      ea.setStyle([frame.id], {
+        excaliCollapsed: payload,
+        height: 44,
+        name: (frame.name || "画框") + "（" + members.length + "）",
+      });
+      ea.deleteElements(members.map((e) => e.id));
+      ea.notify(
+        "已折叠 " + members.length + " 个元素，画框缩成标签条；再跑一次还原",
+      );
+    }
+  }
+}
+\`\`\`
+`;
+
 export const BUILTIN_SCRIPTS: Array<{ file: string; content: string }> = [
   { file: "mindmap-from-headings.md", content: MINDMAP_SCRIPT },
   { file: "table-from-markdown.md", content: TABLE_SCRIPT },
@@ -1051,6 +1195,8 @@ export const BUILTIN_SCRIPTS: Array<{ file: string; content: string }> = [
   { file: "text-numbering.md", content: NUMBERING_SCRIPT },
   { file: "highlighter.md", content: HIGHLIGHTER_SCRIPT },
   { file: "material-recipe.md", content: MATERIAL_RECIPE_SCRIPT },
+  { file: "selection-fold.md", content: SELECTION_FOLD_SCRIPT },
+  { file: "frame-collapse.md", content: FRAME_COLLAPSE_SCRIPT },
 ];
 
 const BUILTIN_FILES = new Set(BUILTIN_SCRIPTS.map((s) => s.file));

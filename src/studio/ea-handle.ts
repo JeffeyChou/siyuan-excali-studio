@@ -13,7 +13,7 @@ import { imageNaturalSize } from "./image-import";
 import { makeElement, nextId, anchorPoint, nearestSide, expandElementSpecs, hasBoundText, type ElementSpec, type Side } from "./ea-element";
 import { makeEmbeddableElement } from "./embeddable";
 import type { PenSnapshot, PenStyle } from "./pens.ts";
-import type { EaBoardHandle } from "./ea-api";
+import type { EaBoardHandle, CaptureAction } from "./ea-api";
 
 /** 画布明暗主题的读写器（StudioApp 用 React 状态实现；theme 的出口给脚本） */
 export type ThemeControl = {
@@ -25,7 +25,7 @@ export function createEaBoardHandle(api: ExcalidrawImperativeAPI, theme?: ThemeC
   return {
     getElements: () => api.getSceneElements(),
     getAppState: () => api.getAppState(),
-    addElements: (specs: ElementSpec[]) => {
+    addElements: (specs: ElementSpec[], capture?: CaptureAction) => {
       const els = expandElementSpecs(specs);
       const ids: string[] = [];
       let cursor = 0;
@@ -37,22 +37,22 @@ export function createEaBoardHandle(api: ExcalidrawImperativeAPI, theme?: ThemeC
       }
       api.updateScene({
         elements: [...api.getSceneElements(), ...(els as never[])],
-        captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+        captureUpdate: capture ?? CaptureUpdateAction.IMMEDIATELY,
       });
       return ids;
     },
-    patchElements: (ids: string[], patch: Record<string, unknown>) => {
+    patchElements: (ids: string[], patch: Record<string, unknown>, capture?: CaptureAction) => {
       const set = new Set(ids);
       api.updateScene({
         elements: api.getSceneElements().map((e) => (set.has(e.id) ? { ...e, ...patch } : e)) as never,
-        captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+        captureUpdate: capture ?? CaptureUpdateAction.IMMEDIATELY,
       });
     },
-    deleteElements: (ids: string[]) => {
+    deleteElements: (ids: string[], capture?: CaptureAction) => {
       const set = new Set(ids);
       api.updateScene({
         elements: api.getSceneElements().filter((e) => !set.has(e.id)) as never,
-        captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+        captureUpdate: capture ?? CaptureUpdateAction.IMMEDIATELY,
       });
     },
     clear: () => api.resetScene({}),

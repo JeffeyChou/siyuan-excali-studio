@@ -8,6 +8,7 @@
  * （顶层 await 可用），console 被替换成收集器。
  */
 
+import type { CaptureUpdateAction } from "@excalidraw/excalidraw";
 import type { AppState } from "@excalidraw/excalidraw/types";
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import { nextId, type ElementSpec, type Side, type Box, boundingBoxOf, estimateTextWidth, wrapTextByWidth } from "./ea-element.ts";
@@ -16,15 +17,23 @@ import { HL_ROUGHNESS, normalizeHighlighter, type HighlighterConfig, type PenSna
 
 export type { ElementSpec, Side, Box } from "./ea-element.ts";
 
+/**
+ * updateScene 的历史栈行为。vendor 的 CaptureUpdateAction 是 const 对象（不是 enum），
+ * 类型面只能 typeof 查询：IMMEDIATELY（默认，进撤销栈）/ NEVER（不进，动画中间帧用）。
+ */
+export type CaptureAction = (typeof CaptureUpdateAction)[keyof typeof CaptureUpdateAction];
+
 /** 画布窄接口（StudioApp 实现） */
 export interface EaBoardHandle {
   getElements: () => readonly ExcalidrawElement[];
   getAppState: () => AppState;
-  /** 批量加元素，返回新元素 id 列表 */
-  addElements: (specs: ElementSpec[]) => string[];
-  /** 按 id 给元素打样式补丁（同 id 覆盖进 scene） */
-  patchElements: (ids: string[], patch: Record<string, unknown>) => void;
-  deleteElements: (ids: string[]) => void;
+  /** 批量加元素，返回新元素 id 列表。
+   *  capture：历史栈行为（默认 IMMEDIATELY 进撤销栈；动画中间帧传 NEVER） */
+  addElements: (specs: ElementSpec[], capture?: CaptureAction) => string[];
+  /** 按 id 给元素打样式补丁（同 id 覆盖进 scene）；capture 语义同 addElements */
+  patchElements: (ids: string[], patch: Record<string, unknown>, capture?: CaptureAction) => void;
+  /** 真删元素；capture 语义同 addElements */
+  deleteElements: (ids: string[], capture?: CaptureAction) => void;
   clear: () => void;
   selectElements: (ids: string[]) => void;
   updateScene: (appState: Partial<AppState>) => void;
@@ -164,9 +173,9 @@ export interface EaApi {
   /* 链接（第二十六轮 T6）：`siyuan:doc/<文档ID>` 写进元素 link，画布上点击跳文档 */
   setLink: (ids: string[] | "selection", link: string | null) => void;
   getLink: (id: string) => string | null;
-  /* 导出 */
-  exportSVG: (scale?: number) => Promise<Blob>;
-  exportPNG: (scale?: number) => Promise<Blob>;
+  /* 导出（ids = 只导这些元素的子集；export-steps 分步图用） */
+  exportSVG: (scale?: number, ids?: string[]) => Promise<Blob>;
+  exportPNG: (scale?: number, ids?: string[]) => Promise<Blob>;
   /* 保存 / 文档（宿主）；save = 立即冲刷落盘（第二十一轮起无保存菜单，脚本侧语义不变） */
   save: () => void;
   /** 消息提示（宿主 showMessage；脚本反馈的标准出口） */
@@ -306,8 +315,8 @@ export function createEaApi(handle: EaBoardHandle, host: EaHost, scriptName = ""
       return el && typeof el.link === "string" ? el.link : null;
     },
 
-    exportSVG: (scale) => handle.exportImage("svg", scale),
-    exportPNG: (scale) => handle.exportImage("png", scale),
+    exportSVG: (scale, ids) => handle.exportImage("svg", scale, ids),
+    exportPNG: (scale, ids) => handle.exportImage("png", scale, ids),
 
     save: () => host.save(),
     notify: (msg) => host.notify(msg),

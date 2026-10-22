@@ -328,12 +328,10 @@ test("Excalidraw 运行时引用的每个字体文件也都在插件根（样式
   assert.deepEqual(missing, [], "这些字体不在插件根 fonts/ ⇒ 离线时回落 esm.sh，手绘字会丢");
 });
 
-test("根 index.js / index.css 带上第十九轮 BAK 纪律 + 恢复入口（备份链文案 / 恢复按钮 / 避让提示）", () => {
+test("根 index.js / index.css 带上存量备份的读侧（恢复按钮 / 避让提示），写侧文案已清干净", () => {
   const code = jsAll();
   const css = readFileSync(CSS, "utf8");
   for (const s of [
-    "滚进备份链",
-    ".bak2、.bak3，最多三份",
     "从备份恢复",
     "没有找到可用的备份",
     "已从备份恢复",
@@ -342,8 +340,14 @@ test("根 index.js / index.css 带上第十九轮 BAK 纪律 + 恢复入口（�
     assert.ok(code.includes(s), `没进产物：${s}`);
   }
   assert.match(css, /\.exs-loaderror__act/, "恢复按钮的排版样式没进产物");
-  // 旧的单份口径文案不该再出现在产物里
-  assert.equal(code.includes("只保留最新一份"), false, "单份备份的旧口径还留在产物文案里");
+  // 第五十四轮：备份写侧退役——设置项文案与滚动提示都不该再出现在产物里
+  for (const gone of ["滚进备份链", ".bak2、.bak3，最多三份", "覆盖前留备份", "只保留最新一份"]) {
+    assert.equal(code.includes(gone), false, `备份写侧的旧文案还留在产物里：${gone}`);
+  }
+  // 第五十四轮：等价门与双主题槽位都得真的进产物（源码改了、构建漏了 = 运行时照旧抖）
+  assert.ok(code.includes("excaliLightBg") && code.includes("excaliDarkBg"), "主题背景槽位没进产物");
+  assert.ok(code.includes("boundElements"), "语义归一（空 boundElements 不算改动）没进产物");
+  assert.equal(readFileSync(KERNEL, "utf8").includes("keepBackup"), false, "内核产物还认 keepBackup");
 });
 
 test("内核产物：四个能力、注册接口、设置读取与 plugin.json kernels 声明", () => {

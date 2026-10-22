@@ -167,6 +167,22 @@ test("契约·新建链路（第二十一轮文件先行）：命名 → 建空�
   assert.match(APP, /const pathRef = useRef<string \| null>\(initialPath\);/, "路径初始值直接来自页签 data（新建也有）");
 });
 
+test("契约·命名对话框 Apple UI 化（第五十轮）：scope 类、content 定边距、素/实心主次按钮", () => {
+  const CSS = src("index.css");
+  assert.match(INDEX, /dialog\.element\.classList\.add\("exs-name-dialog"\)/, "scope 类必须挂 Dialog 根上（样式只在自家弹窗生效，不污染思源）");
+  assert.equal([...INDEX.matchAll(/classList\.add\("exs-name-dialog"\)/g)].length, 2, "promptFileName 与 inputPrompt 两个弹窗都要接 scope 类（同款观感）");
+  // 贴边根因：思源 content 内边距随主题浮动——显式给死才稳
+  assert.match(CSS, /\.exs-name-dialog \.b3-dialog__content \{[^}]*padding: 14px 24px 20px;/, "content 左右 24px 定死，「位置」不再贴边");
+  // 按钮主次对齐 macOS：取消素钮、确定实心强调色（旧 b3-button--outline/--text 拼法退役）
+  assert.match(INDEX, /<button class="b3-button exs-name-cancel" type="button">\$\{t\("取消"\)\}<\/button>/, "取消 = 素钮");
+  assert.match(INDEX, /<button class="b3-button exs-name-ok" type="button">\$\{t\("确定"\)\}<\/button>/, "确定 = 主钮");
+  assert.equal(INDEX.includes("b3-button--outline exs-name-cancel"), false, "旧描边拼法退役");
+  assert.match(CSS, /\.exs-name-dialog \.exs-name-ok \{[^}]*background: var\(--b3-theme-primary[^)]*\);/, "确定钮吃主题强调色实心");
+  assert.match(CSS, /\.exs-name-dialog \.b3-dialog__container \{[^}]*border-radius: 12px;/, "容器 12px 圆角（对齐底栏 --exs-pill-radius 口径）");
+  assert.match(CSS, /\.exs-name-tip \{[^}]*background: var\(--b3-theme-background-light/, "「位置」行做成浅底信息条");
+  assert.match(CSS, /\.exs-name-actions \{[^}]*justify-content: flex-end;/, "按钮右对齐（内联 style 已搬到类里）");
+});
+
 test("契约·M2 文档内入口：块图标菜单只对 assets/*.svg 出现", () => {
   assert.match(INDEX, /"click-blockicon"/, "块菜单事件没接，文档里的图就没有回编辑的入口");
   assert.match(INDEX, /svgAssetPathOf\(detail\.blockElements\)/, "判定必须基于被点的块，不能猜选中的是哪个");
@@ -404,7 +420,10 @@ test("契约·防抖自动保存（第二十一轮）：每次 onChange 重排�
   assert.match(APP, /if \(autoSaveTimer\.current !== null\) window\.clearTimeout\(autoSaveTimer\.current\);/, "每次回调先清旧定时器：拖拽每帧重置，松手才落");
   assert.match(APP, /scheduleAutoSave\(\);/, "handleChange 末尾无条件重排（busy/守卫跳过的轮次也靠后续交互补上）");
   assert.match(APP, /useEffect\(\s*\(\) => \(\) => \{[\s\S]{0,140}window\.clearTimeout\(autoSaveTimer\.current\);/, "卸载清定时器：悬空 timer 会打空气 api");
-  assert.equal(APP.includes("setInterval"), false, "60s 定时退役：防抖已覆盖，blur/vis 保留立即冲刷");
+  assert.equal(APP.includes("60000"), false, "60s 定时退役：防抖已覆盖，blur/vis 保留立即冲刷");
+  // 批 1B 开了一个唯一的 interval：放映相机飞行窗 + 自动前进的 60ms 追帧（与存盘无关）
+  assert.equal((APP.match(/setInterval/g) ?? []).length, 1, "全文件只许有放映追帧这一个 interval");
+  assert.match(APP, /window\.setInterval\(\(\) => \{[\s\S]{0,1600}\}, 60\);/, "那个 interval 必须是 60ms 的放映追帧");
   assert.match(APP, /window\.addEventListener\("blur", onBlur\)/, "失焦立即冲刷：切窗不丢最近一笔");
   assert.match(APP, /document\.addEventListener\("visibilitychange", onVis\)/, "切走（页签隐藏）立即冲刷");
 });
@@ -560,13 +579,13 @@ test("第三十八轮·荧光笔落面：竖条一枚按钮 + 不占位色板 + 
   const SRAIL = stripComments(src("studio/ScriptRail.tsx"));
   const HANDLE = stripComments(src("studio/ea-handle.ts"));
   const CSS = src("index.css");
-  // 顶部条整体退役（拍板：只留 vendor 自己的素材库按钮）
-  assert.equal(APP.includes("renderTopRightUI"), false, "vendor 右上角扩展位不再挂自绘条");
+  // 顶部条整体退役（拍板：只留 vendor 自己的素材库按钮）。第五十三轮起扩展位重新
+  // 开了一次窗，但只给演示 ▶；笔刷条这类自绘控件不许再借道回来（契约见 menu.test）。
   assert.equal(APP.includes("PenRail"), false, "PenRail.tsx 已整文件删除");
   assert.equal(APP.includes("penOptions"), false, "penOptions（压感/描边轮廓）不许假装支持，官方 appState 不暴露");
   // 按钮：整条只有一枚；未激活=切荧光笔，已激活=弹色板（拍板口径）
   assert.equal((SRAIL.match(/onClick=\{onHlBtnClick\}/g) ?? []).length, 1, "只有一枚荧光笔按钮");
-  assert.match(SRAIL, /title=\{props\.hlActive \? t\("荧光笔（已激活，再点换色）"\) : t\("荧光笔"\)\}/, "两态 tooltip 分流");
+  assert.match(SRAIL, /tipShow\(e\.currentTarget, props\.hlActive \? t\("荧光笔（已激活，再点换色）"\) \+ " \/ Highlighter active" : t\("荧光笔"\) \+ " \/ Highlighter"\)/, "两态 tooltip 分流（2026-10-22 起走 Obsidian 式双语药丸，不再用原生 title）");
   assert.match(SRAIL, /aria-pressed=\{props\.hlActive\}/, "激活态可及性标注");
   assert.match(SRAIL, /\["--exs-hl-color" as string\]: props\.highlighter\.color/, "当前配置色用 CSS 变量下传给笔尖色条");
   // 色板内容：六色 + 自定义 + 三档粗细，全部数据驱动
@@ -580,11 +599,14 @@ test("第三十八轮·荧光笔落面：竖条一枚按钮 + 不占位色板 + 
   // 子元素会被裁切并被拉进它的层叠上下文。用 div 配对扫描盯死这条线。
   const railDiv = SRAIL.lastIndexOf("<div", SRAIL.indexOf("ref={rootRef}"));
   assert.ok(railDiv >= 0, "竖条根节点");
+  // 扫描副本：JSX 属性里 `(e) => …` 的 `>` 会骗过 [^>]* 的自闭合识别（2026-10-22 tooltip 轮踩到），
+  // 等长替换成 `==` 让下标保持一致，只喂扫描器，不改原断言。
+  const SCAN = SRAIL.replace(/=>/g, "==");
   const tag = /<div\b[^>]*\/>|<div\b|<\/div>/g;
   tag.lastIndex = railDiv;
   let depth = 0;
   let railClose = -1;
-  for (let m; (m = tag.exec(SRAIL)); ) {
+  for (let m; (m = tag.exec(SCAN)); ) {
     if (m[0].startsWith("</")) depth -= 1;
     else if (m[0].endsWith("/>")) continue;
     else depth += 1;
@@ -732,7 +754,9 @@ test("第三十五轮·侧边栏两态全手动：展开 / 收进拉手（删图
   const RAIL = stripComments(src("studio/ScriptRail.tsx"));
   // 图钉与自动收进整体删除（用户拍板：收进/展开一律手动）
   assert.ok(!/ICON_PIN/.test(RAIL), "图钉图标已删");
-  assert.ok(!/railPinned|tempOpen|AUTOHIDE_DELAY|onMouseLeave/.test(RAIL), "无图钉/临时弹出/宽限/悬停判定残留");
+  assert.ok(!/railPinned|tempOpen|AUTOHIDE_DELAY/.test(RAIL), "无图钉/临时弹出/宽限残留");
+  // 2026-10-22：竖条加了 tooltip，onMouseLeave 只剩 tipHide 一个用途，不许再挂收进/弹出
+  assert.ok(!/onMouseLeave(?!\s*=\s*\{\s*tipHide\s*\})/.test(RAIL), "悬停离开只关提示，触发收进的路子已封");
   // 两态：railOff 看记忆的 scriptRailCollapsed；脚本选择器 / vendor 侧栏开着时整体让位
   assert.match(RAIL, /const railOff = props\.railCollapsed \|\| props\.pickerOpen \|\| props\.sidebarOpen;/, "收进状态单一来源 + 两档让位");
   assert.match(RAIL, /pickerOpen: boolean;/, "pickerOpen prop 声明");
@@ -807,7 +831,7 @@ test("第三十四轮·真机修复三连：侧边栏可拖拽 + 视图状态广
 
 test("P2·脚本库面板：行内设置抽屉 + 行尾固定开关（不弹新 Dialog 防遮罩叠层）", () => {
   // ① 选择器升级为脚本库：标题 + 行尾动作组 + 行内抽屉
-  assert.match(INDEX, /title: t\("脚本库"\)/, "选择器标题改为脚本库");
+  assert.match(INDEX, /title: t\("拓展功能"\)/, "第五十一轮：选择器标题改「拓展功能」（拆两类后 umbrella 改口）");
   assert.match(INDEX, /exs-script-item__actions/, "行尾动作按钮组");
   assert.match(INDEX, /data-act="gear"/, "设置按钮（仅声明了参数的脚本显示）");
   assert.match(INDEX, /data-act="pin"/, "固定开关按钮（点按翻转，右键菜单保留）");
@@ -844,7 +868,7 @@ test("P2·脚本库面板：行内设置抽屉 + 行尾固定开关（不弹新 
   assert.match(STORE, /已去掉 " \+ texts\.length \+ " 条文字的编号/, "toggle off 提示");
   assert.ok(!/detectFormat/.test(STORE), "监测启发式已删（改 Shift 显式）");
   assert.match(STORE, /if \(picked === null\) return;/, "菜单取消 = 什么都不做");
-  assert.match(STORE, /fmt = \[1, 2, 3, 4, 5\]\.includes\(parsed\) \? parsed : 1;/, "脏设置值静默回落 1（不再二次弹窗追问）");
+  assert.match(STORE, /fmt = \[1, 2, 3, 4, 5, 6\]\.includes\(parsed\) \? parsed : 1;/, "脏设置值静默回落 1（不再二次弹窗追问）");
   // 内置脚本更新通道（installBuiltinScripts 已存在不覆盖 → 升级后旧版残留）
   assert.match(STORE, /export async function outdatedBuiltinScripts/, "过期检测导出");
   assert.match(STORE, /export async function resetBuiltinScripts/, "重置导出（只覆盖不一致的）");

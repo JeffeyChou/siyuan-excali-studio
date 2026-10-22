@@ -19,12 +19,20 @@
 // 用法：node scripts/build.mjs   （package.json 的 build 已指到这里）
 
 import { build } from "vite";
+import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { excalidrawZhCnPatch } from "./excalidraw-zh-cn-patch.mjs";
 import { excalidrawFontsPatch } from "./excalidraw-fonts-patch.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+/**
+ * 第五十二轮：版本号构建期从 plugin.json 注入（消费方 src/siyuan/changelog.ts 的 PLUGIN_VERSION）。
+ * 不走运行时 `this.version`：思源 SDK 的 Plugin 类型没这个字段，取到 undefined 就等于
+ * 「每次启动都升级了」，弹窗会跟着每次重启出现。
+ */
+const PLUGIN_VERSION = JSON.parse(readFileSync(resolve(ROOT, "plugin.json"), "utf8")).version;
 
 /** 两趟共享的构建参数；差异只在入口 / 产物名 / 输出目录 */
 function config(entry, outDir, fileName) {
@@ -33,6 +41,9 @@ function config(entry, outDir, fileName) {
     root: ROOT,
     plugins: [excalidrawZhCnPatch(), excalidrawFontsPatch()],
     base: "./",
+    define: {
+      __EXCALI_PLUGIN_VERSION__: JSON.stringify(PLUGIN_VERSION),
+    },
     build: {
       target: "esnext",
       outDir,

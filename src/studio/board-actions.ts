@@ -38,4 +38,9 @@ export interface BoardActions {
    * 只在画布层能做（拿得到 scene / files / 预览导出器）。
    */
   openImageToMaterial: () => void;
+  /**
+   * 第五十三轮：拓展功能「演示模式」行 → 当前活动画布打开演示抽屉。
+   * 片单/元数据都在画布层（拿得到场景与 api），宿主只负责把这一下转过去。
+   */
+  openPresentation: () => void;
 }

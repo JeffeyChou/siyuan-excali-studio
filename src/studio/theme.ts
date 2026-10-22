@@ -94,17 +94,26 @@ export function themeBgForMode(
 }
 
 /**
- * 落盘前的 appState 补槽：把当前背景写进**当前主题**的槽位（另一主题的槽位
- * 原样保留——用户只在亮色设过 A 的话，切到暗色不会被亮色值覆盖成 A）。
+ * 落盘前的 appState 补槽：把当前背景写进**当前主题**的槽位，另一主题的槽位原样带回去。
  * 空背景（跟随主题默认）也照存：槽位为空串 = 「这个主题用默认」，persistableAppState
  * 会把空串槽位剥掉，双方口径一致。
+ *
+ * `slots` 不是可选的装饰：appState 是 vendor 的现场状态，它不认识 excaliLightBg /
+ * excaliDarkBg 这两个自定义键，restore 时被丢掉——所以「另一槽」只能由调用方
+ * （画板加载时读到的 bgSlots）补回来。漏了它，用户每翻一次主题存一次盘，
+ * 对侧的主题背景记忆就被抹掉一次（实测是备份链无谓轮转的主因之一）。
+ * appState 里真带着槽位时（测试/外部构造）以它为准。
  */
 export function withThemeBgSlot(
   appState: Record<string, unknown>,
   mode: ThemeMode,
+  slots?: ThemeBgSlots,
 ): Record<string, unknown> {
   const bg = typeof appState.viewBackgroundColor === "string" ? appState.viewBackgroundColor : "";
-  return mode === "dark"
-    ? { ...appState, excaliDarkBg: bg }
-    : { ...appState, excaliLightBg: bg };
+  const other = mode === "dark"
+    ? (typeof appState.excaliLightBg === "string" ? appState.excaliLightBg : slots?.light ?? "")
+    : (typeof appState.excaliDarkBg === "string" ? appState.excaliDarkBg : slots?.dark ?? "");
+  const otherKey = mode === "dark" ? "excaliLightBg" : "excaliDarkBg";
+  const currentKey = mode === "dark" ? "excaliDarkBg" : "excaliLightBg";
+  return { ...appState, [currentKey]: bg, ...(other ? { [otherKey]: other } : {}) };
 }

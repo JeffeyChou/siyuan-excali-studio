@@ -41,6 +41,8 @@ export interface ElementSpec {
   name?: string;
   link?: string | null;
   groupIds?: string[];
+  /** 归属画框（frame-collapse 展开还原用：普通 add* 缺省 null 不进框） */
+  frameId?: string | null;
   /** image：二进制文件 id（handle.addFiles 注册过的） */
   fileId?: string;
 }
@@ -86,7 +88,7 @@ export function makeElement(spec: ElementSpec): Record<string, unknown> {
     roughness: spec.roughness ?? 1,
     opacity: spec.opacity ?? 100,
     groupIds: spec.groupIds ?? [],
-    frameId: null,
+    frameId: spec.frameId ?? null,
     roundness: spec.roundness !== undefined ? spec.roundness : roundnessOf(type),
     seed,
     version: 1,

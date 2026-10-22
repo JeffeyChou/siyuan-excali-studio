@@ -17,17 +17,58 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Excalidraw, TTDDialog, hashElementsVersion } from "@excalidraw/excalidraw";
+import { CaptureUpdateAction, Excalidraw, TTDDialog, hashElementsVersion } from "@excalidraw/excalidraw";
 import type { AppState, BinaryFiles, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { excalidrawLangCode, t } from "../i18n";
 import { themeBgForMode, readSiyuanThemeMode, readThemeBgSlots, watchSiyuanThemeMode, withThemeBgSlot, type ThemeMode } from "./theme";
 import { StudioMenu } from "./StudioMenu";
 import { ScriptRail, type ScriptRailItem } from "./ScriptRail";
 import { LineIcon } from "./line-icon";
-import { ICON_DELETE, ICON_DUPLICATE, ICON_MINUS, ICON_PALETTE, ICON_PLUS, ICON_REDO, ICON_UNDO } from "./menu-icons";
+import { ICON_DELETE, ICON_DUPLICATE, ICON_MINUS, ICON_PALETTE, ICON_PLAY, ICON_PLUS, ICON_PRESENTATION, ICON_REDO, ICON_UNDO } from "./menu-icons";
 import { AiChannelsPanel } from "./AiChannelsPanel";
 import type { AiChannels, ChannelId } from "./ai/channels";
-import { IMAGE_TO_MATERIAL, INSERT_BOARD_CARD, OUTLINE_COLOR, railActionOf, type RailActionId, type RailActionMeta } from "./rail-actions.ts";
+import { IMAGE_TO_MATERIAL, INSERT_BOARD_CARD, OUTLINE_COLOR, PRESENTATION, railActionMount, railActionOf, type RailActionId, type RailActionMeta } from "./rail-actions.ts";
+import { deckOf, deckSignature, moveSlide, PRESENTATION_KEY, slideTitle, toggleSlide, toggleSlideReveal, visibleSlides, type Deck, type DeckPatch, type FrameLike, type Slide } from "./presentation-plan";
+import { installRadioIsolation } from "./radio-isolation.ts";
+import {
+  buildRestorePatches,
+  buildRunPatches,
+  lastStep,
+  planPage,
+  snapshotOpacity,
+  type Cursor,
+  type RunElement,
+  type RunPatch,
+  type RunPlan,
+} from "./presentation-run.ts";
+import { buildSlideGraph, graphState, type GraphFrame, type GraphSide, type GraphState, type SlideGraph } from "./presentation-graph.ts";
+import {
+  navEnd,
+  navHome,
+  navJump,
+  navNext,
+  navPrev,
+  navStart,
+  toCursor,
+  type NavState,
+} from "./presentation-nav.ts";
+import {
+  TYPEWRITER_CURSOR,
+  TYPEWRITER_MIN_MS,
+  buildTextPatches,
+  buildTextRestorePatches,
+  cursorVisible,
+  graphemes,
+  newlyRevealedIds,
+  snapshotText,
+  typedPrefix,
+  typingTargets,
+  type TextElementLike,
+  type TextPatch,
+} from "./presentation-typewriter.ts";
+import { normalizePresentationSettings, type PresentationSettings } from "./settings";
+import { PresentationDrawer } from "./PresentationDrawer";
+import { PresentationStage } from "./PresentationStage";
 import { imageTargetMessageKey, pickImageTarget, type ImageLike } from "./image-to-material.ts";
 import { ImageToMaterialDialog } from "./ImageToMaterialDialog";
 import { outlineTargets } from "./outline.ts";
@@ -64,6 +105,7 @@ import {
 import { fileNameOf, stampFileName } from "./storage";
 import type { BoardActions } from "./board-actions";
 import { createEaBoardHandle } from "./ea-handle";
+import { TextFoldOverlay } from "./TextFoldOverlay";
 import type { EaBoardHandle } from "./ea-api";
 import type { LoadedScene } from "./scene";
 
@@ -71,6 +113,12 @@ type ExcalidrawInitialData = React.ComponentProps<typeof Excalidraw>["initialDat
 
 /** 第二十一轮：防抖自动保存的静止判定窗口（停手约 1 秒无新变更才落盘） */
 const AUTOSAVE_DELAY = 1000;
+
+/** 相机飞行的最短节流窗：期间翻页先排队，落地后再追最后一个意图 */
+const PRESENT_CAM_MS = 260;
+
+/** 放映推进的来路：advance 才打字；jump/enter 只落补丁 */
+type PresentNav = "advance" | "jump" | "enter";
 
 export type StudioProps = {
   /** 打开已有白板时的内容；新建为 null */
@@ -140,6 +188,12 @@ export type StudioProps = {
    */
   getAiChannels: () => AiChannels;
   onAiChannel: (id: ChannelId, on: boolean) => void;
+  /**
+   * 第五十三轮：演示偏好（幕布/逐条/打字机/光标/速度/留白/自动前进）。
+   * getPresentationSettings 在打开抽屉与进片场时各拉一次；改一项就落盘并回写。
+   */
+  getPresentationSettings: () => PresentationSettings;
+  onPresentationSetting: <K extends keyof PresentationSettings>(key: K, value: PresentationSettings[K]) => void;
   /** 2026-10-16：网格的全局记忆值（视图偏好，打开时覆盖文件里的值；开页签时读一次） */
   gridModeEnabled: boolean;
   /** 2026-10-16：用户在画布上切换网格时回写记忆值 */
@@ -219,6 +273,8 @@ export function StudioApp(props: StudioProps) {
     onHelp,
     getAiChannels,
     onAiChannel,
+    getPresentationSettings,
+    onPresentationSetting,
     gridModeEnabled,
     onGridChange,
     onCopyBoardRef,
@@ -402,6 +458,21 @@ export function StudioApp(props: StudioProps) {
   }, [applyDiskLibrary, libDirAbs, notify]);
 
   const rootRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * 2026-10-22：多画板页签 ⇒ 工具栏按钮高亮闪烁的修复（根因是 vendor 的 radio 组名
+   * 硬编码为 "editor-current-shape"，同 document 内多实例互相取消选中）。
+   * 详见 radio-isolation.ts 的完整根因说明。
+   *
+   * 时机：vendor 的 .excalidraw 容器在 Excalidraw 挂载后才在 DOM 里，
+   * 所以按 api 就绪（api 拿到时容器已渲染）再找容器。
+   */
+  useEffect(() => {
+    if (!api) return;
+    const root = rootRef.current;
+    if (!root) return;
+    const container = root.querySelector<HTMLElement>(".excalidraw");
+    return installRadioIsolation(container);
+  }, [api]);
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
   const pathRef = useRef<string | null>(initialPath);
@@ -523,6 +594,723 @@ export function StudioApp(props: StudioProps) {
     }
     setImageToMaterialId(target.image.id);
   }, [api, notify]);
+
+  /*
+   * 第五十三轮·批 0：演示模式。片单 = 画布上的画框（presentation-plan 是纯逻辑），
+   * 页序/入片写进 frame.customData.presentation。右上角那枚 ▶ 只在「拓展功能」里
+   * 钉了演示模式时出现（入口越少越好），抽屉是画布内 absolute 浮层。
+   */
+  const [presentOpen, setPresentOpen] = useState(false);
+  const [deck, setDeck] = useState<Deck>(() => ({ slides: [], hasOrdered: false }));
+  const [presentSel, setPresentSel] = useState(0);
+  /**
+   * 第七十六轮：放映图状态（面板提示用）——板子上有画框之间的箭头吗？
+   * 有 → 放映沿箭头走（可分叉、可绕圈）；没有 → 按片单顺序翻。
+   * 跟 deck 一起在 syncDeck 里更新（onChange 每帧都跑，靠签名去重）。
+   */
+  const [presentGraph, setPresentGraph] = useState<GraphState>(() => ({
+    kind: "linear",
+    linkedIds: [],
+    unlinkedIds: [],
+    edgeCount: 0,
+  }));
+  /** 批 1E：抽屉里的偏好面板（开抽屉时从宿主设置拉一份，改一项就落一项） */
+  const [presentSettings, setPresentSettings] = useState<PresentationSettings>(() =>
+    normalizePresentationSettings(getPresentationSettings()),
+  );
+  /** 批 1A：放映游标（null = 没在放映）+ 闸门、快照。状态是异步的，闸门必须用 ref */
+  const [presenting, setPresenting] = useState<Cursor | null>(null);
+  const presentingRef = useRef(false);
+  const presentSnapRef = useRef<{
+    plans: RunPlan[];
+    /** 进片场时定格的页名（HUD 用；放映中片单不会变，但别每帧重算） */
+    titles: string[];
+    /**
+     * 第七十六轮：放映有向图（画框=节点、箭头=边）。
+     * null = 板子上没有连页箭头 → 退回线性翻页（片单顺序）。
+     */
+    graph: SlideGraph | null;
+    /** 进片场那一刻的原始 opacity：退出照它回填（画框也在内） */
+    original: Map<string, number>;
+    /** 批 1D：进片场那一刻的全文（含绑定文字），退出照它回填 */
+    textOriginal: Map<string, string>;
+    scrollX: number;
+    scrollY: number;
+    zoom: number;
+    viewModeEnabled: boolean;
+    /**
+     * 第七十六轮：进片场时的 frameRendering 开关原值。
+     * 放映期间关掉画框的框线/名字/裁剪（成员照常渲染），退出照它还原。
+     */
+    frameRendering: { enabled: boolean; name: boolean; outline: boolean; clip: boolean };
+    /** 批 1E：进片场定格的偏好——一场放映内不许中途换口径 */
+    scrim: boolean;
+    typewriter: boolean;
+    cursor: boolean;
+    speed: number;
+    fit: number;
+    autoAdvance: number;
+    /** 方向键沿边导航（Advanced Canvas 的 useDirectionalSlideNavigation） */
+    directional: boolean;
+    /** 进片场时是否申请过全屏（退出时要退回） */
+    fullscreen: boolean;
+  } | null>(null);
+  /**
+   * 第七十六轮：导航状态是放映的**唯一真源**（页 + 页内分条 + 访问栈 + 已走边）。
+   * `presenting`（Cursor）只是它给 React 看的派生视图。
+   */
+  const presentNavRef = useRef<NavState | null>(null);
+  /** 相机飞行窗：窗内收到的换页意图先记在 pending，落地后再追 */
+  const presentCamUntilRef = useRef(0);
+  const presentPendingRef = useRef<{ nav: NavState; kind: PresentNav } | null>(null);
+  const presentGoRef = useRef<(nav: NavState, kind?: PresentNav) => void>(() => {});
+  /** 已经落到场景上的游标：算「这一步新露出谁」不能拿可能过期一帧的 state */
+  const presentCurRef = useRef<Cursor | null>(null);
+  /** 正在跑的打字任务（null = 没在打）；rAF 独立于相机轮询 */
+  const typingRef = useRef<{
+    targets: { id: string; parts: string[]; withCursor: boolean }[];
+    start: number;
+    speed: number;
+    raf: number;
+    lastSig: string;
+  } | null>(null);
+  /** 自动前进的截止时间（0 = 不走；打字中暂停，打完重新计时） */
+  const presentDeadlineRef = useRef(0);
+  const presentNextRef = useRef<() => void>(() => {});
+  /** 键盘监听只注册一次，处理器每帧换 —— 避免每次翻页重绑 window 监听 */
+  const presentKeysRef = useRef<{
+    next: () => void;
+    prev: () => void;
+    home: () => void;
+    end: () => void;
+    exit: () => void;
+    /** 方向键按方位走边（Advanced Canvas 的方向导航）；没图时退化成 next/prev */
+    nextDir: (side: GraphSide) => void;
+    /** 切全屏 */
+    fullscreen: () => void;
+  } | null>(null);
+  const deckSigRef = useRef("");
+  /** 图状态签名（边集合 + 未连页集合）：与页序签名分开，箭头变了它才变 */
+  const graphSigRef = useRef("");
+  /** onChange 每帧都跑，所以按签名去重；画框挪动/改名会让签名变化，片单跟着重排 */
+  const syncDeck = useCallback((elements: readonly FrameLike[]): void => {
+    const next = deckOf(elements);
+    const sig = deckSignature(next);
+    if (sig !== deckSigRef.current) {
+      deckSigRef.current = sig;
+      setDeck(next);
+    }
+    // 图状态另算，且**不受页序签名去重约束**：签名只管页序/入片，
+    // 而边来自箭头——用户画/删一根箭头时签名不变，但放映路线已经变了。
+    // 所以图状态用自己的签名（边 id 集合 + 未连页集合）去重。
+    const shown = visibleSlides(next);
+    const frames: GraphFrame[] = shown.map((s) => ({
+      id: s.id,
+      x: s.x,
+      y: s.y,
+      width: s.w,
+      height: s.h,
+    }));
+    const gs = graphState(buildSlideGraph(elements as unknown as Parameters<typeof buildSlideGraph>[0], frames));
+    const gsSig = `${gs.kind}|${gs.edgeCount}|${gs.linkedIds.join(",")}|${gs.unlinkedIds.join(",")}`;
+    if (gsSig === graphSigRef.current) return;
+    graphSigRef.current = gsSig;
+    setPresentGraph(gs);
+  }, []);
+  /** 元数据写入走正常场景更新：可撤销、会标脏、自动保存照旧落盘 */
+  const applyDeckPatches = useCallback(
+    (patches: DeckPatch[]): void => {
+      if (!api || patches.length === 0) return;
+      const byId = new Map(patches.map((p) => [p.id, p.patch]));
+      api.updateScene({
+        elements: api
+          .getSceneElements()
+          .map((e) => {
+            const patch = byId.get(e.id);
+            if (!patch) return e;
+            const custom = { ...(e.customData as Record<string, unknown> | undefined) };
+            for (const [key, value] of Object.entries(patch)) {
+              custom[key] = { ...(custom[key] as Record<string, unknown> | undefined), ...value };
+            }
+            return { ...e, customData: custom };
+          }) as never,
+        captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+      });
+    },
+    [api],
+  );
+  const moveDeckSlide = useCallback(
+    (from: number, to: number): void => applyDeckPatches(moveSlide(deck, from, to)),
+    [applyDeckPatches, deck],
+  );
+  const toggleDeckSlide = useCallback(
+    (id: string): void => applyDeckPatches(toggleSlide(deck, id)),
+    [applyDeckPatches, deck],
+  );
+  const toggleDeckReveal = useCallback(
+    (id: string): void => applyDeckPatches(toggleSlideReveal(deck, id)),
+    [applyDeckPatches, deck],
+  );
+  /** 宿主设置是唯一真源；打开抽屉时拉一次，避免另一块画板改过之后这边停在上次的值 */
+  const readPresentSettings = useCallback(
+    (): PresentationSettings => normalizePresentationSettings(getPresentationSettings()),
+    [getPresentationSettings],
+  );
+  const openPresentDrawer = useCallback((): void => {
+    setPresentSettings(readPresentSettings());
+    setPresentOpen(true);
+  }, [readPresentSettings]);
+  const changePresentSetting = useCallback(
+    <K extends keyof PresentationSettings,>(key: K, value: PresentationSettings[K]): void => {
+      const next = normalizePresentationSettings({ ...presentSettings, [key]: value });
+      if (next[key] === presentSettings[key]) return;
+      setPresentSettings(next);
+      onPresentationSetting(key, next[key]);
+    },
+    [onPresentationSetting, presentSettings],
+  );
+  /**
+   * 把镜头对准画框：自算 fit（不依赖 scrollToContent——0.18.1 在嵌入环境里
+   * 对「传 id / 传数组」两种分支都不稳，经常不放大，导致整块宽白板缩小显示、
+   * 画框只占一角被黑幕盖住、文字看不清）。
+   * 直接读 appState.width/height 算目标 scrollX/scrollY/zoom，再短 tween 平滑过去；
+   * 放映补丁一律 NEVER，不进撤销栈。scrim 的 rAF 读的是同一份 live appState，洞跟着走。
+   *
+   * scroll 口径对齐 vendor（jut → _Me，见 engine.js）：屏幕映射是
+   * `screen = (scene + scroll) * zoom`，要把场景点 cx 对准视口中线 vw/2，就得
+   * `(cx + scrollX) * zoom = vw/2` ⇒ **`scrollX = vw / (2 * zoom) - cx`**。
+   * 符号写反（写成 `cx - vw/(2*zoom)`）会让镜头飞到画布另一侧——上一轮就踩过：
+   * 点第 2 页却把镜头甩到左边，看不到目标画框。改动这个公式前先对一眼 _Me。
+   */
+  const presentCamRafRef = useRef(0);
+  const focusFrame = useCallback(
+    (frameId: string, fit = 0.92): void => {
+      if (!api) return;
+      const all = api.getSceneElements();
+      const frame = all.find((e) => e.id === frameId);
+      if (!frame) return;
+      const members = all.filter((e) => (e as { frameId?: string | null }).frameId === frameId);
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const e of [frame, ...members]) {
+        if ((e as { isDeleted?: boolean }).isDeleted) continue;
+        x0 = Math.min(x0, e.x);
+        y0 = Math.min(y0, e.y);
+        x1 = Math.max(x1, e.x + (e.width ?? 0));
+        y1 = Math.max(y1, e.y + (e.height ?? 0));
+      }
+      const bw = x1 - x0, bh = y1 - y0;
+      if (!(bw > 0) || !(bh > 0)) return;
+      const st = api.getAppState();
+      const vw = st.width || 1200;
+      const vh = st.height || 800;
+      // zoom 口径同 vendor：min(可用宽/bound宽, 可用高/bound高) * viewportZoomFactor
+      const zoom = Math.min((vw * fit) / bw, (vh * fit) / bh);
+      const cx = x0 + bw / 2, cy = y0 + bh / 2;
+      // scroll 口径同 vendor _Me：(viewport/2)/zoom - sceneCenter（**减号在前**）
+      const toScrollX = vw / (2 * zoom) - cx;
+      const toScrollY = vh / (2 * zoom) - cy;
+      const fromScrollX = st.scrollX ?? 0;
+      const fromScrollY = st.scrollY ?? 0;
+      const fromZoom = st.zoom?.value || 1;
+      const start = performance.now();
+      if (presentCamRafRef.current) window.cancelAnimationFrame(presentCamRafRef.current);
+      const tick = (): void => {
+        const t = Math.min(1, (performance.now() - start) / PRESENT_CAM_MS);
+        // easeInOutQuad
+        const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        api.updateScene({
+          appState: {
+            scrollX: fromScrollX + (toScrollX - fromScrollX) * e,
+            scrollY: fromScrollY + (toScrollY - fromScrollY) * e,
+            zoom: { value: fromZoom + (zoom - fromZoom) * e },
+          } as never,
+          captureUpdate: CaptureUpdateAction.NEVER,
+        });
+        if (t < 1) presentCamRafRef.current = window.requestAnimationFrame(tick);
+        else presentCamRafRef.current = 0;
+      };
+      presentCamRafRef.current = window.requestAnimationFrame(tick);
+    },
+    [api],
+  );
+  // 面板跳页要和放映用同一份取景系数，否则齿轮里的「镜头留白」滑块只对放映生效、
+  // 点页码跳过去永远是写死的 0.92（读的是快照值，未开放映时也有默认，见 readPresentSettings）
+  const jumpToSlide = useCallback(
+    (slide: Slide): void => focusFrame(slide.id, presentSettings.fit),
+    [focusFrame, presentSettings.fit],
+  );
+
+  /** 放映补丁一律 NEVER：不进撤销栈、不产生撤销点，退出回填后画布回到放映前 */
+  const applyRunPatches = useCallback(
+    (patches: RunPatch[]): void => {
+      if (!api || patches.length === 0) return;
+      const byId = new Map(patches.map((p) => [p.id, p.opacity]));
+      api.updateScene({
+        elements: api.getSceneElements().map((e) => (byId.has(e.id) ? { ...e, opacity: byId.get(e.id) as number } : e)) as never,
+        captureUpdate: CaptureUpdateAction.NEVER,
+      });
+    },
+    [api],
+  );
+  /** 文本补丁同样 NEVER；只动 text，width / height / originalText 原样带着（见 typewriter 头注释） */
+  const applyTextPatches = useCallback(
+    (patches: TextPatch[]): void => {
+      if (!api || patches.length === 0) return;
+      const byId = new Map(patches.map((p) => [p.id, p.text]));
+      api.updateScene({
+        elements: api.getSceneElements().map((e) => (byId.has(e.id) ? { ...e, text: byId.get(e.id) as string } : e)) as never,
+        captureUpdate: CaptureUpdateAction.NEVER,
+      });
+    },
+    [api],
+  );
+  /** 把某个游标落到场景上：纯函数算「该显示谁」，和现场比差异再写 */
+  const presentApply = useCallback(
+    (cur: Cursor): void => {
+      const snap = presentSnapRef.current;
+      if (!snap || !api) return;
+      const plan = snap.plans[cur.page];
+      if (!plan) return;
+      applyRunPatches(buildRunPatches(api.getSceneElements() as unknown as RunElement[], plan, cur.step, snap.original));
+    },
+    [api, applyRunPatches],
+  );
+
+  const bumpAutoDeadline = useCallback((): void => {
+    const snap = presentSnapRef.current;
+    presentDeadlineRef.current =
+      snap && snap.autoAdvance > 0 ? performance.now() + snap.autoAdvance * 1000 : 0;
+  }, []);
+
+  /** 打字收尾：立刻补全所有在打的文本（打字中按 next 只补完，不翻页） */
+  const finishTyping = useCallback((): void => {
+    const run = typingRef.current;
+    if (!run) return;
+    typingRef.current = null;
+    window.cancelAnimationFrame(run.raf);
+    const all = api ? (api.getSceneElements() as unknown as TextElementLike[]) : [];
+    applyTextPatches(buildTextPatches(all, new Map(run.targets.map((t) => [t.id, t.parts.join("")]))));
+    bumpAutoDeadline();
+  }, [api, applyTextPatches, bumpAutoDeadline]);
+
+  /**
+   * 给这一步新露出的文本开打字机：先清空（与 opacity 同一事件循环，不闪全文），
+   * 再由独立 rAF 逐字补。返回是否真的在打（没有文本目标就交给自动前进计时）。
+   */
+  const startTyping = useCallback(
+    (ids: readonly string[]): boolean => {
+      const snap = presentSnapRef.current;
+      if (!snap || !api || !snap.typewriter || ids.length === 0) return false;
+      const live = api;
+      const all = live.getSceneElements() as unknown as TextElementLike[];
+      const targets = typingTargets(all, ids).map((t) => ({
+        id: t.id,
+        parts: graphemes(t.text),
+        withCursor: false,
+      }));
+      if (targets.length === 0) return false;
+      if (snap.cursor) targets[targets.length - 1].withCursor = true;
+      const run: NonNullable<typeof typingRef.current> = {
+        targets,
+        start: performance.now(),
+        speed: Math.max(TYPEWRITER_MIN_MS, snap.speed),
+        raf: 0,
+        lastSig: "",
+      };
+      typingRef.current = run;
+      applyTextPatches(buildTextPatches(all, new Map(targets.map((t) => [t.id, ""]))));
+      const tick = (): void => {
+        if (typingRef.current !== run) return;
+        const elapsed = performance.now() - run.start;
+        let done = true;
+        const desired = new Map<string, string>();
+        for (const t of run.targets) {
+          const n = Math.min(t.parts.length, Math.floor(elapsed / run.speed));
+          if (n < t.parts.length) done = false;
+          let text = typedPrefix(t.parts, n);
+          if (t.withCursor && n < t.parts.length && cursorVisible(elapsed)) text += TYPEWRITER_CURSOR;
+          desired.set(t.id, text);
+        }
+        if (done) {
+          typingRef.current = null;
+          applyTextPatches(
+            buildTextPatches(
+              live.getSceneElements() as unknown as TextElementLike[],
+              new Map(run.targets.map((t) => [t.id, t.parts.join("")])),
+            ),
+          );
+          bumpAutoDeadline();
+          return;
+        }
+        const sig = [...desired].map(([id, text]) => `${id}\u0000${text}`).join("\u0001");
+        if (sig !== run.lastSig) {
+          run.lastSig = sig;
+          applyTextPatches(
+            buildTextPatches(live.getSceneElements() as unknown as TextElementLike[], desired),
+          );
+        }
+        run.raf = window.requestAnimationFrame(tick);
+      };
+      run.raf = window.requestAnimationFrame(tick);
+      return true;
+    },
+    [api, applyTextPatches, bumpAutoDeadline],
+  );
+  /**
+   * 落一次导航：动镜头 + 落补丁 + 起打字。
+   *
+   * 第七十六轮：入参从 Cursor 改成 NavState——访问栈与「已走过的边」是导航的一部分，
+   * 只靠 {page,step} 表达不了「沿图绕回」。Cursor 由 NavState 派生。
+   */
+  const presentGo = useCallback(
+    (nav: NavState, kind: PresentNav = "jump"): void => {
+      const snap = presentSnapRef.current;
+      if (!snap) return;
+      const prevNav = presentNavRef.current;
+      const prev = prevNav ? toCursor(prevNav) : null;
+      const next = toCursor(nav);
+      const pageChanged = !!prev && next.page !== prev.page;
+      if (pageChanged && performance.now() < presentCamUntilRef.current) {
+        // 镜头还在飞：先记下最后意图，等飞行窗结束再追——快速连按不丢页
+        presentPendingRef.current = { nav, kind };
+        return;
+      }
+      if (pageChanged) {
+        presentCamUntilRef.current = performance.now() + PRESENT_CAM_MS;
+        focusFrame(snap.plans[next.page].frameId, snap.fit);
+      }
+      setPresenting(next);
+      presentNavRef.current = nav;
+      presentApply(next);
+      if (kind === "advance" || kind === "enter") {
+        // 只有向前推进才打字；跳页 / 后退直接给全文
+        const started = startTyping(newlyRevealedIds(snap.plans[next.page], prev, next));
+        presentDeadlineRef.current = 0;
+        if (!started) bumpAutoDeadline();
+      } else {
+        bumpAutoDeadline();
+      }
+    },
+    [bumpAutoDeadline, focusFrame, presentApply, startTyping],
+  );
+  presentGoRef.current = presentGo;
+
+  /** 点进度点 = 跳到那一页的**整页态**（落到最后一条，而不是只露第一条） */
+  const presentJump = useCallback(
+    (page: number): void => {
+      const snap = presentSnapRef.current;
+      const cur = presentNavRef.current;
+      if (!snap || !cur) return;
+      finishTyping();
+      presentPendingRef.current = null;
+      presentGo(navJump(snap.plans, cur, page), "jump");
+    },
+    [finishTyping, presentGo],
+  );
+
+  /*
+   * 唯一 interval（60ms）：① 相机飞行窗结束后把排队意图落下；
+   * ② 自动前进到点后走一步（打字中 / 飞行中 / 有排队时先不走）。
+   */
+  useEffect(() => {
+    if (!presenting) return;
+    const timer = window.setInterval(() => {
+      const now = performance.now();
+      const pending = presentPendingRef.current;
+      if (pending && now >= presentCamUntilRef.current) {
+        presentPendingRef.current = null;
+        presentGoRef.current(pending.nav, pending.kind);
+      }
+      if (typingRef.current || presentPendingRef.current) return;
+      const snap = presentSnapRef.current;
+      if (!snap || snap.autoAdvance <= 0) return;
+      if (now < presentCamUntilRef.current) return;
+      const deadline = presentDeadlineRef.current;
+      if (deadline > 0 && now >= deadline) {
+        presentDeadlineRef.current = 0;
+        presentNextRef.current();
+      }
+    }, 60);
+    return () => window.clearInterval(timer);
+  }, [presenting]);
+
+  /**
+   * 进片场：先抓快照（原始 opacity / 全文 + 视口 + 视图模式 + 放映偏好），
+   * 再关编辑、藏抽屉、落第一屏。不主动 flush——放映不改磁盘。
+   *
+   * 第七十六轮（照搬 Advanced Canvas）：
+   * - **建有向图**：画框=节点、画框间的箭头=边。有边就沿边走，没有就线性翻页。
+   * - **关画框渲染**：frameRendering 关掉，框线/画框名/裁剪都没了，成员照常渲染。
+   *   （这是「放映全空」的根治点——不再把画框 opacity 压 0，也不清零非当前页。）
+   */
+  const enterPresentation = useCallback((): void => {
+    if (!api) return;
+    const all = api.getSceneElements() as unknown as RunElement[];
+    const shown = visibleSlides(deck);
+    if (shown.length === 0) {
+      notify(t("先画一个画框，再开始演示"));
+      return;
+    }
+    const ps = readPresentSettings();
+    const st = api.getAppState();
+    // 建图：节点 = 入片页的画框；边 = 画框之间的箭头
+    const frames: GraphFrame[] = shown.map((s) => ({
+      id: s.id,
+      x: s.x,
+      y: s.y,
+      width: s.w,
+      height: s.h,
+    }));
+    const built = buildSlideGraph(all as unknown as Parameters<typeof buildSlideGraph>[0], frames);
+    const graph = built.edges.length > 0 ? built : null;
+    presentSnapRef.current = {
+      plans: shown.map((s) => planPage(all, s.id, ps.reveal && s.reveal !== "all")),
+      titles: shown.map((s) => t(slideTitle(s))),
+      graph,
+      original: snapshotOpacity(all),
+      textOriginal: snapshotText(all as unknown as TextElementLike[]),
+      scrollX: st.scrollX,
+      scrollY: st.scrollY,
+      zoom: st.zoom.value,
+      viewModeEnabled: !!st.viewModeEnabled,
+      frameRendering: {
+        enabled: st.frameRendering?.enabled !== false,
+        name: st.frameRendering?.name !== false,
+        outline: st.frameRendering?.outline !== false,
+        clip: st.frameRendering?.clip !== false,
+      },
+      scrim: ps.scrim,
+      typewriter: ps.typewriter,
+      cursor: ps.cursor,
+      speed: ps.speed,
+      fit: ps.fit,
+      autoAdvance: ps.autoAdvance,
+      directional: ps.directional,
+      fullscreen: ps.fullscreen,
+    };
+    if (autoSaveTimer.current !== null) {
+      window.clearTimeout(autoSaveTimer.current);
+      autoSaveTimer.current = null;
+    }
+    if (typingRef.current) {
+      window.cancelAnimationFrame(typingRef.current.raf);
+      typingRef.current = null;
+    }
+    presentingRef.current = true;
+    presentCamUntilRef.current = 0;
+    presentPendingRef.current = null;
+    presentNavRef.current = null;
+    presentDeadlineRef.current = 0;
+    api.updateScene({
+      appState: {
+        viewModeEnabled: true,
+        selectedElementIds: {},
+        // 关画框渲染：框线/名字/裁剪消失，成员照常画（不再靠压 opacity 藏画框）
+        frameRendering: { enabled: false, name: false, outline: false, clip: false },
+      } as never,
+      captureUpdate: CaptureUpdateAction.NEVER,
+    });
+    // 起点：有图就从图的起点走，没图就按片单第一页
+    const plans = presentSnapRef.current.plans;
+    const startPage = graph ? Math.max(0, shown.findIndex((s) => s.id === graph.start)) : 0;
+    const nav = navStart(plans, graph, startPage);
+    presentNavRef.current = nav;
+    setPresentOpen(false);
+    setPresentSel(nav.page);
+    focusFrame(plans[nav.page].frameId, presentSnapRef.current.fit);
+    presentGo(nav, "enter");
+    // 全屏：进片场就申请（失败静默降级为窗口模式）
+    if (ps.fullscreen) {
+      const root = rootRef.current;
+      const el = root as unknown as { requestFullscreen?: () => Promise<void> } | null;
+      if (el && typeof el.requestFullscreen === "function") {
+        void el
+          .requestFullscreen()
+          .then(() => {
+            presentFullscreenRef.current = true;
+          })
+          .catch(() => {
+            presentFullscreenRef.current = false;
+          });
+      }
+    }
+  }, [api, deck, focusFrame, notify, presentGo, readPresentSettings]);
+
+  /**
+   * 退片场：按快照回填 opacity + 全文 + 视口 + viewModeEnabled，然后才摘闸。
+   * 回填与脱闸之间不能夹异步——onChange 同步回调时 presentingRef 还得是 true，
+   * 否则那一帧的指纹会把画布判脏。
+   */
+  const exitPresentation = useCallback((): void => {
+    const snap = presentSnapRef.current;
+    if (!snap) return;
+    if (typingRef.current) {
+      window.cancelAnimationFrame(typingRef.current.raf);
+      typingRef.current = null;
+    }
+    // 退全屏（进片场申请过才退）
+    if (presentFullscreenRef.current) {
+      presentFullscreenRef.current = false;
+      const root = rootRef.current;
+      const doc = root?.ownerDocument;
+      if (doc?.fullscreenElement) void doc.exitFullscreen?.().catch(() => {});
+    }
+    if (api) {
+      const elems = api.getSceneElements();
+      const all = elems as unknown as (RunElement & TextElementLike)[];
+      const opById = new Map(buildRestorePatches(all, snap.original).map((p) => [p.id, p.opacity]));
+      const textById = new Map(buildTextRestorePatches(all, snap.textOriginal).map((p) => [p.id, p.text]));
+      api.updateScene({
+        elements: elems.map((e) => {
+          const op = opById.get(e.id);
+          const text = textById.get(e.id);
+          if (op === undefined && text === undefined) return e;
+          return { ...e, ...(op === undefined ? {} : { opacity: op }), ...(text === undefined ? {} : { text }) };
+        }) as never,
+        appState: {
+          viewModeEnabled: snap.viewModeEnabled,
+          scrollX: snap.scrollX,
+          scrollY: snap.scrollY,
+          zoom: { value: snap.zoom },
+          // 还原画框渲染开关（放映时关掉的）
+          frameRendering: { ...snap.frameRendering },
+        } as never,
+        captureUpdate: CaptureUpdateAction.NEVER,
+      });
+    }
+    presentSnapRef.current = null;
+    presentPendingRef.current = null;
+    presentCamUntilRef.current = 0;
+    presentNavRef.current = null;
+    presentDeadlineRef.current = 0;
+    presentingRef.current = false;
+    setPresenting(null);
+  }, [api]);
+
+  /**
+   * 全屏放映（Advanced Canvas 的 fullscreenPresentationEnabled 同款）。
+   *
+   * 全屏目标是**插件自己的根容器**（.exs-root）而不是 documentElement——
+   * 全屏整个思源窗口会把思源自己的侧栏/Dock 一起顶掉，用户会失去返回路径。
+   * 浏览器拒绝时（宿主限制/无用户手势）静默降级为窗口模式，不报错。
+   */
+  const presentFullscreenRef = useRef(false);
+  const toggleFullscreen = useCallback((): void => {
+    const root = rootRef.current;
+    if (!root) return;
+    const doc = root.ownerDocument;
+    const isFull = !!doc.fullscreenElement;
+    if (isFull) {
+      void doc.exitFullscreen?.().catch(() => {});
+      return;
+    }
+    const el = root as unknown as { requestFullscreen?: () => Promise<void> };
+    if (typeof el.requestFullscreen !== "function") return;
+    void el
+      .requestFullscreen()
+      .then(() => {
+        presentFullscreenRef.current = true;
+      })
+      .catch(() => {
+        // 降级：留在窗口模式放映，功能不受影响
+        presentFullscreenRef.current = false;
+      });
+  }, []);
+
+  /**
+   * 连按时以「排队中的那一页」为基准推进，否则两次快按会被算成同一个目标。
+   *
+   * 第七十六轮：走图（Advanced Canvas 语义）——先走完本页分条，再沿边换页。
+   * `direction` 给定时只走该方位的出边（方向键导航）。
+   */
+  const presentNext = useCallback(
+    (direction?: GraphSide): void => {
+      const snap = presentSnapRef.current;
+      const cur = presentPendingRef.current?.nav ?? presentNavRef.current;
+      if (!snap || !cur || !presenting) return;
+      if (typingRef.current) {
+        // 打字中按下一步：先把这一条打完，第二下才翻页（不会把半截字切走）
+        finishTyping();
+        return;
+      }
+      const next = navNext(snap.plans, snap.graph, cur, direction);
+      if (!next) {
+        exitPresentation();
+        return;
+      }
+      presentGo(next, "advance");
+    },
+    [exitPresentation, finishTyping, presentGo, presenting],
+  );
+  const presentPrev = useCallback((): void => {
+    const snap = presentSnapRef.current;
+    const cur = presentPendingRef.current?.nav ?? presentNavRef.current;
+    if (!snap || !cur || !presenting) return;
+    finishTyping();
+    const prev = navPrev(snap.plans, snap.graph, cur);
+    if (prev) presentGo(prev, "jump");
+  }, [finishTyping, presentGo, presenting]);
+  const presentHome = useCallback((): void => {
+    const snap = presentSnapRef.current;
+    if (!snap) return;
+    finishTyping();
+    const startPage = snap.graph
+      ? Math.max(0, snap.plans.findIndex((p) => p.frameId === snap.graph?.start))
+      : 0;
+    presentGo(navHome(snap.plans, snap.graph, presentNavRef.current ?? navStart(snap.plans, null), startPage), "jump");
+  }, [finishTyping, presentGo]);
+  const presentEnd = useCallback((): void => {
+    const snap = presentSnapRef.current;
+    if (!snap) return;
+    finishTyping();
+    presentGo(navEnd(snap.plans, snap.graph, presentNavRef.current ?? navStart(snap.plans, null)), "jump");
+  }, [finishTyping, presentGo]);
+  presentNextRef.current = presentNext;
+
+  presentKeysRef.current = presenting
+    ? {
+        next: () => presentNext(),
+        prev: presentPrev,
+        home: presentHome,
+        end: presentEnd,
+        exit: exitPresentation,
+        // 方向键：有图且开了方向导航 → 按方位走边；否则退化成普通前进/后退
+        nextDir: (side: GraphSide) => {
+          const snap = presentSnapRef.current;
+          if (snap?.graph && snap.directional) presentNext(side);
+          else if (side === "left" || side === "top") presentPrev();
+          else presentNext();
+        },
+        fullscreen: toggleFullscreen,
+      }
+    : null;
+
+  const startPresentation = useCallback((): void => enterPresentation(), [enterPresentation]);
+
+  /** 幕布/HUD 当前页的计划；退出那一帧 presenting 先置空，不会读到已清的快照 */
+  const presentPlan = presenting ? presentSnapRef.current?.plans[presenting.page] : undefined;
+
+  /*
+   * 落点分流（第五十三轮）：同一份钉子清单里，竖条只渲染 mount=rail 的，
+   * 右上角那枚按钮只认 mount=top-right 且已钉住的。
+   */
+  const railActionsList = useMemo(() => railActions.filter((a) => railActionMount(a) === "rail"), [railActions]);
+  const presentationPinned = useMemo(() => railActions.some((a) => a.id === PRESENTATION), [railActions]);
+  const renderTopRightUI = useCallback(
+    () =>
+      presentationPinned && !presentOpen && !presenting ? (
+        <button
+          type="button"
+          className="exs-present-fab"
+          title={t("演示模式")}
+          aria-label={t("演示模式")}
+          onClick={openPresentDrawer}
+        >
+          <LineIcon d={ICON_PLAY} size={15} strokeWidth={2} />
+        </button>
+      ) : null,
+    [openPresentDrawer, presentationPinned, presentOpen, presenting],
+  );
 
   /** 竖条/库面板之外的入口：第四十轮起 ☰ 不再挂这一项，动作只从竖条走这条本地通道 */
   const runRailAction = useCallback(
@@ -669,6 +1457,8 @@ export function StudioApp(props: StudioProps) {
    * 不存在「跳过即丢」。卸载时清定时器，关闭前的兜底冲刷走 tab.tsx 的 flush。
    */
   const scheduleAutoSave = useCallback(() => {
+    // 批 1A：放映期间的场景带的是临时 opacity 补丁，落盘就等于把「藏了一半」写进文件
+    if (presentingRef.current) return;
     if (autoSaveTimer.current !== null) window.clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = window.setTimeout(() => {
       autoSaveTimer.current = null;
@@ -688,7 +1478,8 @@ export function StudioApp(props: StudioProps) {
   const handleChange = useCallback(
     (elements: unknown, appState: AppState, files: BinaryFiles) => {
       sceneRef.current = { elements: elements as ExportScene["elements"], appState, files };
-      if (!dirtyRef.current) {
+      // 批 1A：放映期间场景里的 opacity 是临时补丁，既不许判脏也不许排自动保存
+      if (!presentingRef.current && !dirtyRef.current) {
         // 第十五轮：只有指纹和落盘那份不等才算改过。平移、换工具、点色板、打开后没动
         // 都会回调 onChange，过去一律置脏，于是假脏点 + 自动保存白跑一整套导出。
         // 只在「干净」态算指纹：一脏就不再多算，拖拽时每帧成本是零。
@@ -744,6 +1535,8 @@ export function StudioApp(props: StudioProps) {
         sidebarOpenRef.current = sidebar;
         setSidebarOpen(sidebar);
       }
+      // 第五十三轮：片单跟着场景走（签名去重，抽屉没开时也只是几个字符串比较）
+      syncDeck(elements as readonly FrameLike[]);
       // 第四十六轮 B2 批：选中态驱动底栏中段三键 + zoom 百分比（都只在翻转时 setState）。
       const hasSel = Object.keys(appState.selectedElementIds ?? {}).length > 0;
       if (hasSel !== hasSelectionRef.current) {
@@ -759,7 +1552,7 @@ export function StudioApp(props: StudioProps) {
       // 放在指纹判定之外：busy/守卫跳过的轮次也靠后续交互把定时器再排上。
       scheduleAutoSave();
     },
-    [onBoardActive, onGridChange, scheduleAutoSave, stampOf],
+    [onBoardActive, onGridChange, scheduleAutoSave, stampOf, syncDeck],
   );
 
   /** 场景快照：优先现读 api（和既有保存链路同源），拆树后的极端场景兜到 onChange 的影子 */
@@ -801,6 +1594,9 @@ export function StudioApp(props: StudioProps) {
    * 原样等下一轮防抖/交互，不是丢改动。
    */
   const flush = useCallback(async (): Promise<boolean> => {
+    // 批 1A：放映中场景带临时补丁，绝不能落盘；返回「进入前是否干净」，
+    // 关页签时宿主才能按真实脏态决定要不要提示（不是一律放行）。
+    if (presentingRef.current) return !dirtyRef.current;
     if (busyRef.current) return !dirtyRef.current;
     if (!dirtyRef.current) return true;
     const path = pathRef.current;
@@ -817,6 +1613,7 @@ export function StudioApp(props: StudioProps) {
         appState: withThemeBgSlot(
           scene.appState as unknown as Record<string, unknown>,
           modeRef.current,
+          bgSlotsRef.current,
         ) as unknown as Partial<AppState>,
       };
       // 第二十六轮 T1：图片外置——载荷里的 files 换成 assets/excali-media 引用
@@ -854,10 +1651,11 @@ export function StudioApp(props: StudioProps) {
       },
       openOutlinePalette: requestOutline,
       openImageToMaterial,
+      openPresentation: () => openPresentDrawer(),
     };
     registerActions(actions);
     return () => registerActions(null);
-  }, [api, eaHandle, insertCard, registerActions, flush, requestOutline, openImageToMaterial]);
+  }, [api, eaHandle, insertCard, registerActions, flush, requestOutline, openImageToMaterial, openPresentDrawer]);
 
   // 2026-10-15 阶段 A → 第二十一轮：自动保存从「60s 定时 + 失焦 + 切走」收敛成
   // 「防抖（handleChange 里排）+ 失焦/切走立即冲刷」。定时器在防抖上线后退役——
@@ -1066,8 +1864,80 @@ export function StudioApp(props: StudioProps) {
       if (!hit) return;
       event.preventDefault();
       event.stopImmediatePropagation();
+      // 批 1A：放映中这两个组合键一律吞掉——保存由 flush 闸自己挡，导出也不该弹框
+      if (presentingRef.current) return;
       if (key === "s") void flushRef.current();
       else setExportOpen(true);
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, []);
+
+  /**
+   * 批 1A：放映键位。只在放映中接管（presentKeysRef 非空），其余时候一行都不碰；
+   * 统一在 capture 阶段吃掉，vendor 的 frame 选择/快捷键收不到。
+   * 键位：→ ↓ 空格 PageDown Enter = 下一步；← ↑ PageUp Backspace = 上一步；
+   * Home/End = 首页/末页；Esc = 退出。带 ⌘/Ctrl/Alt 的组合一律放行。
+   */
+  /**
+   * 批 1A：放映键位。只在放映中接管（presentKeysRef 非空），其余时候一行都不碰；
+   * 统一在 capture 阶段吃掉，vendor 的 frame 选择/快捷键收不到。
+   * 键位：→ ↓ 空格 PageDown Enter = 下一步；← ↑ PageUp Backspace = 上一步；
+   * Home/End = 首页/末页；Esc = 退出；F = 切全屏。带 ⌘/Ctrl/Alt 的组合一律放行。
+   *
+   * 第七十六轮：方向键在**有图**时按方位走边（Advanced Canvas 的方向导航：
+   * 按右键走右边的出边、按 ↓ 走下边的出边），没图时就是普通的前进/后退。
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      const keys = presentKeysRef.current;
+      if (!keys) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      let act: (() => void) | null = null;
+      switch (event.key) {
+        case "Escape":
+          act = keys.exit;
+          break;
+        case "ArrowRight":
+          act = () => keys.nextDir("right");
+          break;
+        case "ArrowDown":
+          act = () => keys.nextDir("bottom");
+          break;
+        case "PageDown":
+        case " ":
+        case "Spacebar":
+        case "Enter":
+          act = keys.next;
+          break;
+        case "ArrowLeft":
+          act = () => keys.nextDir("left");
+          break;
+        case "ArrowUp":
+          act = () => keys.nextDir("top");
+          break;
+        case "PageUp":
+        case "Backspace":
+          act = keys.prev;
+          break;
+        case "Home":
+          act = keys.home;
+          break;
+        case "End":
+          act = keys.end;
+          break;
+        case "f":
+        case "F":
+          act = keys.fullscreen;
+          break;
+        default:
+          return;
+      }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      // 按住方向键不连翻；但仍然吃干净，免得重复事件漏给 vendor 去平移画布
+      if (event.repeat) return;
+      act();
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
@@ -1079,6 +1949,7 @@ export function StudioApp(props: StudioProps) {
         "exs-root",
         hasSelection ? "exs-selection" : "",
         propsOpen && hasSelection ? "exs-props-open" : "",
+        presenting ? "exs-presenting" : "",
       ]
         .filter(Boolean)
         .join(" ")}
@@ -1105,6 +1976,7 @@ export function StudioApp(props: StudioProps) {
           }}
           libraryReturnUrl={libraryImportUrl}
           validateEmbeddable={isEmbeddableAllowed}
+          renderTopRightUI={renderTopRightUI}
           onLibraryChange={(items) => {
             void saveLibraryItems(items as unknown[])
               .catch((e) => console.warn("[excali-studio] 图库保存失败", e))
@@ -1131,6 +2003,20 @@ export function StudioApp(props: StudioProps) {
           {/* 第二十八轮：Mermaid 转图元对话框（vendor 自带，openDialog=ttd 时自显） */}
           <TTDDialog __fallback />
         </Excalidraw>
+        {/* 2026-10-22：文本折叠圆点控制钮层（脚本「选区折叠为列表」的交互面） */}
+        <TextFoldOverlay api={api} getHandle={() => eaHandleRef.current} notify={notify} />
+        {/* 批 1B：幕布 + HUD 住在画布里，含块跟画布走（不用 fixed） */}
+        {presenting && presentPlan ? (
+          <PresentationStage
+            api={api}
+            plan={presentPlan}
+            titles={presentSnapRef.current?.titles ?? []}
+            page={presenting.page}
+            scrim={presentSnapRef.current?.scrim ?? true}
+            onJump={presentJump}
+            onExit={exitPresentation}
+          />
+        ) : null}
       </div>
       {/*
         第四十六轮 B2 批：底栏（对标 fork TrayMenu 的 flex 流）。中段 [🎨⧉🗑] 与
@@ -1183,7 +2069,7 @@ export function StudioApp(props: StudioProps) {
       */}
       <ScriptRail
         pinned={pinnedScripts}
-        actions={railActions}
+        actions={railActionsList}
         railCollapsed={railCollapsed}
         pickerOpen={pickerOpen}
         sidebarOpen={sidebarOpen}
@@ -1203,6 +2089,25 @@ export function StudioApp(props: StudioProps) {
         outlineRequest={outlineRequest}
         onOutlineColor={applyOutlineColor}
       />
+      {presentOpen && !presenting ? (
+        <PresentationDrawer
+          deck={deck}
+          graph={presentGraph}
+          settings={presentSettings}
+          onSetting={changePresentSetting}
+          selected={Math.min(presentSel, Math.max(0, deck.slides.length - 1))}
+          onSelect={(i) => {
+            setPresentSel(i);
+            const s = deck.slides[i];
+            if (s) jumpToSlide(s);
+          }}
+          onMove={moveDeckSlide}
+          onToggle={toggleDeckSlide}
+          onToggleReveal={toggleDeckReveal}
+          onStart={startPresentation}
+          onClose={() => setPresentOpen(false)}
+        />
+      ) : null}
       {exportOpen ? (
         <ExportDialog
           getScene={getExportScene}

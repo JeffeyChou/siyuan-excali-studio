@@ -29,6 +29,81 @@ export function normalizeDirRef(dir: string): string {
     .replace(/\/+$/, "");
 }
 
+/**
+ * 第五十三轮：演示模式偏好（跨画板记忆的放映参数）。
+ * 语义同 gridModeEnabled——是「放映偏好」不是「内容」：不写进白板文件，
+ * 改一次所有白板共用；每页的出场方式另有画框元数据（见 presentation-plan）。
+ */
+export type PresentationSettings = {
+  /** 幕布：放映时压暗画框以外的区域 */
+  scrim: boolean;
+  /** 默认逐条出场（页内条目按阅读顺序一条条出现） */
+  reveal: boolean;
+  /** 打字机：文字逐字出现 */
+  typewriter: boolean;
+  /** 打字光标（跟在正在打的字后面闪） */
+  cursor: boolean;
+  /** 每个字之间的毫秒数 */
+  speed: number;
+  /** 镜头留白（0.5~1：画框在视口里占的比例） */
+  fit: number;
+  /** 自动前进秒数（0 = 关） */
+  autoAdvance: number;
+  /**
+   * 第七十六轮：全屏放映（Advanced Canvas 的 fullscreenPresentationEnabled）。
+   * 进片场时请求全屏；失败（浏览器拒绝/思源宿主限制）自动退��窗口模式。
+   */
+  fullscreen: boolean;
+  /**
+   * 第七十六轮：方向键沿边导航（Advanced Canvas 的 useDirectionalSlideNavigation）。
+   * 开：按 → 走右边的出边、按 ↓ 走下边的出边；关：方向键就是普通前进/后退。
+   */
+  directional: boolean;
+};
+
+export const DEFAULT_PRESENTATION: PresentationSettings = {
+  scrim: true,
+  reveal: true,
+  // 打字机默认关：它进场时会先把文字清空再逐字打，一旦 rAF 中途被打断就容易留下
+  // 半截或空文，用户体感就是「文字不显示」。作为可开关的特效留在齿轮里更稳妥。
+  typewriter: false,
+  cursor: false,
+  speed: 28,
+  // 取景放大到 0.95：画框更贴满视口，黑边更细
+  fit: 0.95,
+  autoAdvance: 0,
+  // 全屏默认开：放映就该占满屏（Advanced Canvas 同款）；失败会自动退窗口模式
+  fullscreen: true,
+  // 方向键沿边导航默认关：没画箭头连线时它没有意义，开了反而让人以为方向键失灵
+  directional: false,
+};
+
+function boolOr(v: unknown, fallback: boolean): boolean {
+  return typeof v === "boolean" ? v : fallback;
+}
+
+function clampNum(v: unknown, lo: number, hi: number, fallback: number): number {
+  if (typeof v !== "number" || !Number.isFinite(v)) return fallback;
+  return Math.min(hi, Math.max(lo, v));
+}
+
+/** 演示设置归一：缺键给默认，脏值夹回合法区间（速度 8~200ms，留白 0.5~1，自动前进 0~300s） */
+export function normalizePresentationSettings(raw: unknown): PresentationSettings {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Partial<Record<keyof PresentationSettings, unknown>>;
+  const d = DEFAULT_PRESENTATION;
+  return {
+    scrim: boolOr(r.scrim, d.scrim),
+    reveal: boolOr(r.reveal, d.reveal),
+    typewriter: boolOr(r.typewriter, d.typewriter),
+    cursor: boolOr(r.cursor, d.cursor),
+    speed: Math.round(clampNum(r.speed, 8, 200, d.speed)),
+    fit: clampNum(r.fit, 0.5, 1, d.fit),
+    autoAdvance: Math.round(clampNum(r.autoAdvance, 0, 300, d.autoAdvance)),
+    fullscreen: boolOr(r.fullscreen, d.fullscreen),
+    directional: boolOr(r.directional, d.directional),
+  };
+}
+
 export interface StudioSettings {
   /** 新白板落盘目录（工作空间相对路径，默认 assets/excali） */
   saveDir: string;
@@ -36,10 +111,6 @@ export interface StudioSettings {
   accentStroke: boolean;
   /** 空画板显示引导画面（手绘纸飞机 + 上手提示 + 三个入口） */
   showWelcome: boolean;
-  /** 2026-10-15 阶段 A：覆盖保存前留一份 .bak（默认开）。
-   *  注：第二十一轮前此处是「定时自动保存」开关；防抖自动保存成为唯一保存形态后删除
-   *  （停手约 1 秒落盘 + ⌘S 强制，不可关——关掉即没有保存入口） */
-  keepBackup: boolean;
   /**
    * 2026-10-16：网格显示的全局记忆值。
    * 语义是「视图偏好」而不是「内容」：任意白板里切换网格都写回这里，
@@ -129,13 +200,14 @@ export interface StudioSettings {
    * 软门 / 入口门），语义见 ai/channels.ts 头注释——面板文案必须与之一字不差。
    */
   aiChannels: AiChannels;
+  /** 第五十三轮：演示模式的放映偏好（幕布 / 逐条 / 打字机 / 光标 / 速度 / 留白 / 自动前进） */
+  presentation: PresentationSettings;
 }
 
 export const DEFAULT_SETTINGS: StudioSettings = {
   saveDir: DEDICATED_BOARD_DIR,
   accentStroke: true,
   showWelcome: true,
-  keepBackup: true,
   gridModeEnabled: false,
   boardDir: "/Excali 白板",
   autoOpenBoard: false,
@@ -153,6 +225,7 @@ export const DEFAULT_SETTINGS: StudioSettings = {
   imageApiKey: "",
   imageSize: "1024x1024",
   aiChannels: { ...DEFAULT_AI_CHANNELS },
+  presentation: { ...DEFAULT_PRESENTATION },
 };
 
 export function normalizeSettings(raw: unknown): StudioSettings {
@@ -184,7 +257,6 @@ export function normalizeSettings(raw: unknown): StudioSettings {
     saveDir: dir,
     accentStroke: typeof r.accentStroke === "boolean" ? r.accentStroke : DEFAULT_SETTINGS.accentStroke,
     showWelcome: typeof r.showWelcome === "boolean" ? r.showWelcome : DEFAULT_SETTINGS.showWelcome,
-    keepBackup: typeof r.keepBackup === "boolean" ? r.keepBackup : DEFAULT_SETTINGS.keepBackup,
     gridModeEnabled:
       typeof r.gridModeEnabled === "boolean" ? r.gridModeEnabled : DEFAULT_SETTINGS.gridModeEnabled,
     boardDir,
@@ -221,5 +293,7 @@ export function normalizeSettings(raw: unknown): StudioSettings {
         : DEFAULT_SETTINGS.imageSize,
     // 第四十四轮：AI 通道开关（缺键全开、显式 false 保留、脏值按默认）
     aiChannels: normalizeAiChannels(r.aiChannels),
+    // 第五十三轮：演示偏好（缺键给默认、数值夹回合法区间）
+    presentation: normalizePresentationSettings(r.presentation),
   };
 }

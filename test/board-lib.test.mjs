@@ -354,23 +354,35 @@ test("第二十五轮：搬家/改名把正文里的图片引用一起改（否�
 
 /* ------------------------------ 接线：第十九轮 BAK 纪律 + 恢复入口 ------------------------------ */
 
-test("第十九轮：备份滚动三份的落盘侧纪律在 storage.ts", () => {
+test("第五十四轮：备份链退役——写侧不再产生 .bak，读侧留着收拾存量", () => {
   const STORAGE = stripComments(read("src/studio/storage.ts"));
-  assert.match(STORAGE, /export const BACKUP_KEEP = 3;/);
-  assert.match(STORAGE, /if \(!hasNonEmptyScene\(text\)\) return;/, "空/坏内容不入链（Obsidian 的 hasNonDeletedElements 门）");
-  assert.match(STORAGE, /for \(let slot = BACKUP_KEEP - 1; slot >= 1; slot--\)/, "从旧档往新挪，挪砸也不丢最新备份");
-  assert.match(STORAGE, /await putSvg\(backupPathOf\(target, 1\), text\);|putSvg\(backupPathOf\(target, 1\), text\)/, "新档永远落槽 1");
-  assert.match(STORAGE, /!isBackupPath\(r\.name\)/, "白板库列表排除备份档");
-  assert.match(STORAGE, /for \(let slot = 1; slot <= BACKUP_KEEP; slot\+\+\)/, "重命名把备份链整排搬走");
+  assert.equal(
+    /writeBackup/.test(STORAGE + stripComments(read("src/kernel/io.ts")) + stripComments(INDEX)),
+    false,
+    "写备份的出口整个删掉，不留调用不到的死代码",
+  );
+  assert.equal(
+    /keepBackup/.test(read("src/studio/settings.ts") + stripComments(INDEX)),
+    false,
+    "设置项一并撤掉（normalizeSettings 是白名单，旧档里的 keepBackup 键会被静默丢掉）",
+  );
+  assert.match(STORAGE, /export const BACKUP_KEEP = 3;/, "链条命名口径留着，服务老用户库里的存量档");
+  assert.match(STORAGE, /!isBackupPath\(r\.name\)/, "白板库列表仍排除备份档");
+  assert.match(STORAGE, /for \(let slot = 1; slot <= BACKUP_KEEP; slot\+\+\)/, "重命名仍把存量链整排搬走（留下就是孤档）");
+  assert.match(INDEX, /for \(const bak of plan\.bakPaths\)/, "删除白板仍扫一遍存量档");
 });
 
-test("保存去重：同内容不落盘、不挤占备份链（前端 + 内核同口径）", () => {
-  const STORAGE = stripComments(read("src/studio/storage.ts"));
-  assert.match(STORAGE, /getFileText\(backupPathOf\(target, 1\)\)\) === text\) return;/, "槽 1 已是这一版就跳过");
-  assert.match(INDEX, /if \(current === svgText\) return \{ path: currentPath \};/, "自动保存导出确定性：同内容直接返回");
-  assert.match(INDEX, /writeBackup\(target, current \?\? undefined\)/, "读回的旧正文直接喂给备份，少一次读盘");
-  assert.match(IO, /if \(current === text\) return;/, "内核写盘同样跳过同内容");
-  assert.match(IO, /readText\(backupPathOf\(target, 1\)\)\) === text\) return;/, "内核备份链幂等");
+test("保存去重：正文逐字 + 载荷语义两道门（前端 + 内核同口径）", () => {
+  assert.match(
+    INDEX,
+    /if \(current !== null && sceneTextsEquivalent\(current, svgText\)\) return \{ path: currentPath \};/,
+    "自动保存：语义等价就不落盘（归一化的字节差不再刷 mtime / 惊动同步）",
+  );
+  assert.match(IO, /if \(current !== null && sceneTextsEquivalent\(current, text\)\) return;/, "内核写盘同口径");
+  const CODEC = stripComments(read("src/studio/scene-codec.ts"));
+  assert.match(CODEC, /export function sceneTextsEquivalent/, "比较是纯函数，能真断言");
+  assert.match(CODEC, /if \(a === b\) return true;/, "逐字相等先短路，不白解两次载荷");
+  assert.match(CODEC, /key === "boundElements" && Array\.isArray\(v\) && v\.length === 0/, "归一化主产物：空 boundElements 等同缺键");
 });
 
 test("第十九轮 D·重名避重：探重逻辑在 storage.ts，两条可输名的路径都走它", () => {

@@ -14,12 +14,12 @@ import { STUDIO_ICON_ID, STUDIO_ICON_SVG, slashItemHtml } from "./studio/icons";
 // 第二十六轮 T3：vendor 引擎（scene/svg/tab 及其传递依赖）改走动态 import 的 lazy chunk，
 // 插件启动不再解析 8MB 级引擎——只有静态类型留在这里（import type 会整体擦除）。
 import type { LoadedScene } from "./studio/scene";
-import { hasNonEmptyScene } from "./studio/scene-codec";
+import { hasNonEmptyScene, sceneTextsEquivalent } from "./studio/scene-codec";
 // 第三十轮：图形模板库纯逻辑（解析/合并/diff 计划）——文件读写留本文件
 import { LOCAL_LIB_NAME, mergeLibFiles, parseLibFile, planLibraryWrites, serializeLibFile } from "./studio/stencil";
 // 第三十四轮：脚本侧边栏广播事件（独立小模块，避免主包拉进 React 图）
 import { HIGHLIGHTER_EVENT, RAIL_VIEW_EVENT, SCRIPT_PIN_EVENT } from "./studio/script-pin";
-import { DEFAULT_SETTINGS, DEDICATED_BOARD_DIR, normalizeDirRef, normalizeSettings, type StudioSettings } from "./studio/settings";
+import { DEFAULT_SETTINGS, DEDICATED_BOARD_DIR, normalizeDirRef, normalizePresentationSettings, normalizeSettings, type PresentationSettings, type StudioSettings } from "./studio/settings";
 // 第三十八轮：荧光笔配置（pens.ts 是纯数据模块，无 vendor/React 依赖，主包可直用）
 import { normalizeHighlighter, type HighlighterConfig } from "./studio/pens.ts";
 import {
@@ -29,6 +29,9 @@ import {
 // StudioTabHost/Session 是纯类型（指向 tab.tsx 的宿主形状），import type 整体擦除、
 // 不会把 vendor 拉回主包
 import type { StudioTabHost, StudioTabSession } from "./studio/tab";
+// 移动端没有自定义页签（addTab/openTab 都是空实现），画板改挂全屏浮层。
+// 本模块只建壳，attachStudioTab 仍从引擎 chunk 里取。
+import { createMobileStudioShell, isMobileFrontend, type MobileStudioShell } from "./studio/mobile-studio";
 import type { BoardActions } from "./studio/board-actions";
 import {
   backupChainOf,
@@ -38,7 +41,6 @@ import {
   getFileText,
   joinSavePath,
   listBoardEntries,
-  listBoardFiles,
   listFilesWithExt,
   putBytes,
   putSvg,
@@ -49,7 +51,6 @@ import {
   toAssetRef,
   toDataPath,
   uniqueTargetPath,
-  writeBackup,
   type BoardFileEntry,
 } from "./studio/storage";
 import { MEDIA_DIR, bytesToDataURL, mediaFileName, parseDataUrl } from "./studio/media-ref";
@@ -90,11 +91,22 @@ import {
 } from "./siyuan/doc";
 import { pickBoardFile } from "./siyuan/board-picker";
 import { createDockPanel, type DockHost } from "./siyuan/ExcaliDock";
+// 第五十二轮：版本更新弹窗。判定/切片/渲染都是纯函数（siyuan/changelog.ts，node 里能直接跑单测），
+// 只有 Dialog 那一下留在宿主层。
+import {
+  PLUGIN_VERSION,
+  VERSION_SLOT,
+  changelogDecision,
+  changelogPath,
+  fetchPluginFile,
+  renderChangelogHtml,
+  sliceVersionSection,
+} from "./siyuan/changelog";
 import { installBuiltinScripts, listScripts, outdatedBuiltinScripts, readScript, resetBuiltinScripts, syncBuiltinScripts, SCRIPTS_DIR, SCRIPT_SETTING_SPECS, type ScriptInfo } from "./siyuan/script-store";
 import { runScriptCode } from "./siyuan/script-runner";
 import { createEaApi, type EaApi, type EaHost, type ScriptRunOpts } from "./studio/ea-api";
 import { ICON_PIN, ICON_SCRIPT_GEAR, SCRIPT_ICONS } from "./studio/menu-icons";
-import { IMAGE_TO_MATERIAL, INSERT_BOARD_CARD, OUTLINE_COLOR, RAIL_ACTIONS, isRailActionId, type RailActionId, type RailActionMeta } from "./studio/rail-actions";
+import { IMAGE_TO_MATERIAL, INSERT_BOARD_CARD, OUTLINE_COLOR, PRESENTATION, RAIL_ACTIONS, isRailActionId, railActionMount, railActionOf, type RailActionId, type RailActionMeta } from "./studio/rail-actions";
 import type { ChannelId } from "./studio/ai/channels";
 import { boundingBoxOf, nextId } from "./studio/ea-element";
 import { renderPlan } from "./studio/ai/render";
@@ -279,6 +291,8 @@ export default class ExcaliStudioPlugin extends Plugin {
         }
       })
       .catch((e) => console.warn("[excali-studio] 内置脚本安装失败", e));
+    // 第五十二轮：升级后的一次性更新日志（不 await：弹窗不该挡启动，失败也不该挡任何人进白板）
+    void this.maybeShowChangelog();
   }
 
   onunload() {
@@ -290,6 +304,31 @@ export default class ExcaliStudioPlugin extends Plugin {
       this.embedClickHandler = null;
     }
     if (open.length > 0) showMessage(t("插件已卸载，画板未保存的改动会丢失"), 3000);
+  }
+
+  /**
+   * 第五十二轮：版本更新弹窗。三条口径（用户拍板）：首装不弹只静默记版本、只弹当前
+   * 版本那一段、不设「不再提示」（版本号已经先记进独立槽，× 掉就不会重启再弹）。
+   * 读不到日志 / 该版本没写日志 / 渲染器缺失一律静默。
+   */
+  private async maybeShowChangelog(): Promise<void> {
+    try {
+      const action = changelogDecision(await this.loadData(VERSION_SLOT), PLUGIN_VERSION);
+      if (action === "unknown-version" || action === "up-to-date") return;
+      // 先回写再弹：弹窗被用户划掉、或者这一段的日志其实是空的，都不该下次重启再来一遍
+      await this.saveData(VERSION_SLOT, PLUGIN_VERSION);
+      if (action !== "show") return;
+      const section = sliceVersionSection(await fetchPluginFile(changelogPath(this.name)), PLUGIN_VERSION);
+      if (!section) return;
+      const dialog = new Dialog({
+        title: `${t("更新日志")} v${PLUGIN_VERSION}`,
+        width: "min(640px, 92vw)",
+        content: `<div class="exs-changelog b3-typography">${renderChangelogHtml(section)}</div>`,
+      });
+      dialog.element.classList.add("exs-changelog-dialog");
+    } catch (e) {
+      console.warn("[excali-studio] 更新日志读取失败", e);
+    }
   }
 
   /**
@@ -450,9 +489,13 @@ export default class ExcaliStudioPlugin extends Plugin {
 
   /* ------------------------------ 页签 ------------------------------ */
 
-  private registerStudioTab(): void {
+  /**
+   * 画板宿主通道。桌面页签与移动浮层共用同一份——移动端没有自定义页签，
+   * 但 StudioApp 需要的能力完全一致（读写盘、设置、脚本、演示偏好）。
+   */
+  private studioHost(): StudioTabHost {
     const plugin = this;
-    const host: StudioTabHost = {
+    return {
       load: (dataPath) => this.loadScene(dataPath),
       remapPath: (dataPath) => this.remapBoardPath(dataPath),
       restoreFromBackup: (dataPath) => this.restoreFromBackup(dataPath),
@@ -509,6 +552,9 @@ export default class ExcaliStudioPlugin extends Plugin {
       // 第四十四轮：AI 通道面板——读设置 + 写设置落盘（agent 一栏的重载提示在 setAiChannel）
       getAiChannels: () => this.settings.aiChannels,
       onAiChannel: (id, on) => this.setAiChannel(id, on),
+      // 第五十三轮：演示偏好（开抽屉/进片场时拉快照；改一项落一项）
+      getPresentationSettings: () => this.settings.presentation,
+      onPresentationSetting: (key, value) => this.rememberPresentationSetting(key, value),
       // 第三十四轮·侧边栏视图偏好（getter 实时读设置；第三十五轮删图钉，仅收起/位置）
       get scriptRailCollapsed() {
         return plugin.settings.scriptRailCollapsed;
@@ -539,6 +585,11 @@ export default class ExcaliStudioPlugin extends Plugin {
       /** 画布动作「插入白板卡片」用的选择器：返回库内引用（assets/x.svg），取消 null */
       pickBoardPath: () => this.pickBoardRef(),
     };
+  }
+
+  private registerStudioTab(): void {
+    const plugin = this;
+    const host = this.studioHost();
     this.addTab({
       type: STUDIO_TAB_TYPE,
       init: (custom) => {
@@ -598,7 +649,8 @@ export default class ExcaliStudioPlugin extends Plugin {
       },
       listFiles: async (dir) => {
         try {
-          return await listBoardFiles(dir || plugin.settings.saveDir);
+          // 列全部文件（不筛扩展名）——脚本侧按自己需要过滤（批量导入图片只要图片格式）
+          return await listFilesWithExt(dir || plugin.settings.saveDir);
         } catch {
           return [];
         }
@@ -693,13 +745,14 @@ export default class ExcaliStudioPlugin extends Plugin {
             width: "340px",
             content: `<div class="exs-picker">
   <input class="b3-text-field fn__block exs-name-input" type="${type === "number" ? "number" : type === "password" ? "password" : "text"}" value="${escapeAttr(defaultValue)}" />
-  <div class="fn__flex" style="gap:8px;margin-top:12px;justify-content:flex-end">
-    <button class="b3-button b3-button--outline exs-name-cancel" type="button">${t("取消")}</button>
-    <button class="b3-button b3-button--text exs-name-ok" type="button">${t("确定")}</button>
+  <div class="exs-name-actions">
+    <button class="b3-button exs-name-cancel" type="button">${t("取消")}</button>
+    <button class="b3-button exs-name-ok" type="button">${t("确定")}</button>
   </div>
 </div>`,
             destroyCallback: () => finish(null),
           });
+          dialog.element.classList.add("exs-name-dialog");
           const input = dialog.element.querySelector<HTMLInputElement>(".exs-name-input")!;
           dialog.element.querySelector<HTMLButtonElement>(".exs-name-cancel")!.addEventListener("click", () => finish(null));
           const ok = (): void => finish(input.value);
@@ -1246,22 +1299,31 @@ export default class ExcaliStudioPlugin extends Plugin {
       "点一条立即对当前画布执行；先框选画布元素再跑 = 对选中操作（对齐、连线、标注类）；先打开文档页签再跑 = 读文档内容（思维导图、表格类）。行尾按钮可固定到画布右缘侧边栏 / 改脚本设置（也可右键一条固定）。脚本就是 {dir} 下的 Markdown，可直接编辑，文件头加 @excalidraw-onload 则画布打开时自动运行。",
       { dir: SCRIPTS_DIR },
     )}</div>`;
-    // 第四十一轮：画布动作小节（内置能力，与脚本共用同一枚钉子/同一个右键菜单，但不是
-    // 磁盘上的 .md——执行要拿 React 侧的画布 API）。行结构照抄脚本行，样式零分叉。
+    // 第五十一轮：面板拆两类——内置动作（拓展功能，即面板标题本身）不设组题排顶部，
+    // .md 脚本列表前加「脚本库」组题。行结构照抄脚本行，样式零分叉。
     const pinnedActions = new Set<string>(this.settings.pinnedActions);
+    /*
+     * 第五十三轮：钉子有两种落点——右缘竖条 / 画布右上角。措辞跟着落点走，
+     * 别对用户说「固定到侧边栏」结果出现在右上角。
+     */
+    const pinLabels = (topRight: boolean, on: boolean): { do: string; done: string } =>
+      topRight
+        ? { do: t("固定到右上角"), done: t("已固定在右上角") }
+        : { do: t("固定到侧边栏"), done: t("已固定到侧边栏") };
     const actionRow = (a: RailActionMeta): string => {
       const on = pinnedActions.has(a.id);
+      const labels = pinLabels(railActionMount(a) === "top-right", on);
       return `<div class="b3-list-item exs-script-item${on ? " exs-script-item--pinned" : ""}" data-rail-action="${escapeAttr(
         a.id,
       )}" title="${escapeAttr(a.id)}"><div class="exs-script-item__head"><span class="b3-list-item__text"><span class="exs-script-item__icon">${iconSvg(
         a.icon,
-      )}</span>${escapeHtml(t(a.title))}${on ? ` <span class="exs-script-pin" title="${t("已固定到侧边栏")}"></span>` : ""}</span><span class="exs-script-item__actions"><button type="button" class="b3-button b3-button--text${
+      )}</span>${escapeHtml(t(a.title))}${on ? ` <span class="exs-script-pin" title="${labels.done}"></span>` : ""}</span><span class="exs-script-item__actions"><button type="button" class="b3-button b3-button--text${
         on ? " exs-script-item__btn--on" : ""
-      }" data-act="pin" title="${on ? t("已固定到侧边栏") : t("固定到侧边栏")}">${iconSvg(ICON_PIN)}</button></span></div><span class="exs-script-desc">${escapeHtml(
+      }" data-act="pin" title="${on ? labels.done : labels.do}">${iconSvg(ICON_PIN)}</button></span></div><span class="exs-script-desc">${escapeHtml(
         t(a.desc),
       )}</span></div>`;
     };
-    const actionBlock = `<div class="exs-picker__group">${t("画布动作")}</div>${RAIL_ACTIONS.map(actionRow).join("")}`;
+    const actionBlock = RAIL_ACTIONS.map(actionRow).join("");
     const list = scripts
       .map((s, i) => {
         const specs = SCRIPT_SETTING_SPECS[s.name] ?? [];
@@ -1293,31 +1355,35 @@ export default class ExcaliStudioPlugin extends Plugin {
           )}</span><button type="button" class="b3-button b3-button--text" data-act="reset">${t("重置为最新版")}</button></div>`
         : "";
     const dialog = new Dialog({
-      title: t("脚本库"),
+      title: t("拓展功能"),
       width: "520px",
-      content: `<div class="exs-picker">${outdatedBar}${actionBlock}${hint}<div class="b3-list b3-list--background exs-board-list">${list}</div></div>`,
+      content: `<div class="exs-picker">${outdatedBar}${actionBlock}${hint}<div class="exs-picker__group">${t(
+        "脚本库",
+      )}</div><div class="b3-list b3-list--background exs-board-list">${list}</div></div>`,
       destroyCallback: () => {
         if (this.scriptPickerDialog === dialog) this.scriptPickerDialog = null;
         // 选择器关闭：竖条让位解除（真机 bug 修复——竖条曾浮在 Dialog 上竞合）
         window.dispatchEvent(new CustomEvent(RAIL_VIEW_EVENT, { detail: { pickerOpen: false } }));
       },
     });
+    dialog.element.classList.add("exs-picker-dialog");
     this.scriptPickerDialog = dialog;
     // 选择器开着：右缘竖条整体让位（隐藏不落盘，关窗自动恢复）
     window.dispatchEvent(new CustomEvent(RAIL_VIEW_EVENT, { detail: { pickerOpen: true } }));
     // 固定态的就地刷新（脚本行与动作行是同一个行结构，共用一份；选择器不重开）
-    const markPinned = (item: HTMLElement, pinned: boolean): void => {
+    const markPinned = (item: HTMLElement, pinned: boolean, topRight = false): void => {
+      const labels = pinLabels(topRight, pinned);
       item.classList.toggle("exs-script-item--pinned", pinned);
       const pinBtn = item.querySelector('[data-act="pin"]') as HTMLElement | null;
       if (pinBtn) {
         pinBtn.classList.toggle("exs-script-item__btn--on", pinned);
-        pinBtn.title = pinned ? t("已固定到侧边栏") : t("固定到侧边栏");
+        pinBtn.title = pinned ? labels.done : labels.do;
       }
       const badge = item.querySelector(".exs-script-pin");
       if (pinned && !badge) {
         const dot = document.createElement("span");
         dot.className = "exs-script-pin";
-        dot.title = t("已固定到侧边栏");
+        dot.title = labels.done;
         item.querySelector(".b3-list-item__text")?.appendChild(dot);
       } else if (!pinned && badge) {
         badge.remove();
@@ -1341,9 +1407,10 @@ export default class ExcaliStudioPlugin extends Plugin {
         const id = railRow.dataset.railAction ?? "";
         if (!isRailActionId(id)) return;
         if ((e.target as HTMLElement | null)?.closest?.('[data-act="pin"]')) {
+          const topRight = railActionMount(railActionOf(id)!) === "top-right";
           const pinNow = this.settings.pinnedActions.includes(id);
           this.rememberActionPin(id, !pinNow);
-          markPinned(railRow, !pinNow);
+          markPinned(railRow, !pinNow, topRight);
           return;
         }
         dialog.destroy();
@@ -1415,13 +1482,15 @@ export default class ExcaliStudioPlugin extends Plugin {
         const id = railRow.dataset.railAction ?? "";
         if (!isRailActionId(id)) return;
         e.preventDefault();
+        const topRight = railActionMount(railActionOf(id)!) === "top-right";
         const pinNow = this.settings.pinnedActions.includes(id);
+        const labels = pinLabels(topRight, pinNow);
         const railMenu = new Menu();
         railMenu.addItem({
-          label: pinNow ? t("从侧边栏取消固定") : t("固定到侧边栏"),
+          label: pinNow ? labels.done : labels.do,
           click: () => {
             this.rememberActionPin(id, !pinNow);
-            markPinned(railRow, !pinNow);
+            markPinned(railRow, !pinNow, topRight);
           },
         });
         railMenu.open({ x: e.clientX, y: e.clientY });
@@ -1536,6 +1605,15 @@ export default class ExcaliStudioPlugin extends Plugin {
       actions.openImageToMaterial();
       return;
     }
+    if (id === PRESENTATION) {
+      const actions = this.activeActions();
+      if (!actions) {
+        showMessage(t("先打开一块白板，再放映"));
+        return;
+      }
+      actions.openPresentation();
+      return;
+    }
     if (id !== INSERT_BOARD_CARD) return;
     const actions = this.activeActions();
     if (!actions) {
@@ -1568,6 +1646,20 @@ export default class ExcaliStudioPlugin extends Plugin {
     this.settings = { ...this.settings, highlighter: next };
     this.persist();
     window.dispatchEvent(new CustomEvent(HIGHLIGHTER_EVENT, { detail: next }));
+  }
+
+  /**
+   * 第五十三轮：演示偏好落盘。滑杆拖动时每帧回调，归一后同值直接短路；
+   * 不广播——放映口径在进片场时定格，另一块画板下次开抽屉/开演时自己拉最新值。
+   */
+  private rememberPresentationSetting<K extends keyof PresentationSettings>(
+    key: K,
+    value: PresentationSettings[K],
+  ): void {
+    const next = normalizePresentationSettings({ ...this.settings.presentation, [key]: value });
+    if (this.settings.presentation[key] === next[key]) return;
+    this.settings = { ...this.settings, presentation: next };
+    this.persist();
   }
 
   /** 对当前活动画布跑一个脚本；结果经 showMessage 汇报，日志进 console */
@@ -1658,11 +1750,7 @@ export default class ExcaliStudioPlugin extends Plugin {
       },
       refreshBoardLib: () => void plugin.refreshBoardLib(),
       openBoardFile: (item) => void plugin.openStudioTab(item.dataPath, item.docId || undefined),
-      openDocOf: (docId) => {
-        void openTab({ app: plugin.app, doc: { id: docId } }).catch((e) => {
-          showMessage(t("打开文档失败：{msg}", { msg: e instanceof Error ? e.message : String(e) }), 7000);
-        });
-      },
+      openDocOf: (docId) => plugin.openDocumentById(docId),
       // 第二十二轮：行内悬停按钮与右键菜单共用同两条宿主链路（弹命名框 / 二次确认后删）
       renameBoardFile: (item) => void plugin.renameFromDock(item),
       deleteBoardFile: (item) => void plugin.deleteBoardFile(item),
@@ -1735,6 +1823,12 @@ export default class ExcaliStudioPlugin extends Plugin {
         return;
       }
     }
+    // 移动端（iPad/手机）没有自定义页签：openTab 是空函数，继续走桌面链路
+    // 就会出现「文件建好了、画板永远不出现」。改挂宿主自己的全屏浮层。
+    if (isMobileFrontend()) {
+      this.openMobileStudio(target, docId);
+      return;
+    }
     const before = new Set(this.tabs.values());
     await openTab({
       app: this.app,
@@ -1750,6 +1844,59 @@ export default class ExcaliStudioPlugin extends Plugin {
     // 用「开前后差集」找到新会话，显式聚焦一次，保证用户看得见刚打开的页签
     const fresh = [...this.tabs.values()].find((s) => !before.has(s));
     if (fresh) fresh.tab.parent.switchTab(fresh.tab.headElement);
+  }
+
+  /**
+   * 移动端开板：全屏浮层 + 同一个 attachStudioTab。
+   * 引擎装载期间先放一个占位会话进 tabs，去重/关闭/卸载都能照常工作；
+   * 装载完成后换成真会话，失败就地显示错误（不弹第二层窗）。
+   */
+  private openMobileStudio(dataPath: string | null, docId?: string): void {
+    const data: StudioTabData = { dataPath, docId };
+    const holder: { custom: Custom | null } = { custom: null };
+    const shell = createMobileStudioShell({
+      data,
+      onDispose: () => {
+        const custom = holder.custom;
+        if (!custom) return;
+        this.tabs.delete(custom);
+        this.boardActions.delete(custom);
+        this.onloadRan.delete(custom);
+        if (this.activeCustom === custom) this.activeCustom = null;
+        this.dockRefresh?.();
+      },
+    });
+    const custom = shell.custom;
+    holder.custom = custom;
+    const provisional: StudioTabSession = {
+      tab: custom.tab,
+      data,
+      requestClose: () => shell.close(),
+      closeForDelete: () => shell.close(),
+      dispose: () => undefined,
+    };
+    this.tabs.set(custom, provisional);
+    this.dockRefresh?.();
+    void this.lazyMod()
+      .then((m) => {
+        if (shell.isClosed()) return;
+        shell.body.replaceChildren();
+        const session = m.attachStudioTab(custom, this.studioHost());
+        if (shell.isClosed()) {
+          session.dispose();
+          return;
+        }
+        this.tabs.set(custom, session);
+        shell.mount(session);
+        this.dockRefresh?.();
+      })
+      .catch((e) => {
+        if (shell.isClosed()) return;
+        console.error("[excali-studio] 画板引擎加载失败", e);
+        shell.showError(
+          t("画板引擎加载失败：{msg}", { msg: e instanceof Error ? e.message : String(e) }),
+        );
+      });
   }
 
   /** 读盘 + 解码 + 图片注水；null（新建）直接进画板。失败由页签侧就地显示 */
@@ -2141,6 +2288,27 @@ export default class ExcaliStudioPlugin extends Plugin {
   }
 
   private openDocOf(docId: string): void {
+    this.openDocumentById(docId);
+  }
+
+  /**
+   * 打开文档：桌面走 openTab，移动端走内核的 openMobileFileById。
+   * 移动端的 window.siyuan.openTab 与插件 openTab 都是空函数，共用桌面链路会静默失败。
+   */
+  private openDocumentById(docId: string): void {
+    const host = window as unknown as {
+      siyuan?: { mobile?: unknown; openMobileFileById?: (...args: unknown[]) => unknown };
+      openMobileFileById?: (...args: unknown[]) => unknown;
+    };
+    const mobileOpen = host.openMobileFileById ?? host.siyuan?.openMobileFileById;
+    if (host.siyuan?.mobile && typeof mobileOpen === "function") {
+      try {
+        mobileOpen(this.app, docId, [], "start");
+        return;
+      } catch (e) {
+        console.warn("[excali-studio] 移动端打开文档失败，回落页签", e);
+      }
+    }
     void openTab({ app: this.app, doc: { id: docId } }).catch((e) => {
       showMessage(t("打开文档失败：{msg}", { msg: e instanceof Error ? e.message : String(e) }), 7000);
     });
@@ -2168,13 +2336,14 @@ export default class ExcaliStudioPlugin extends Plugin {
               if (s.data.dataPath === item.dataPath) s.closeForDelete();
             }
             await removeSvg(plan.svgPath);
-            // 第十九轮：备份滚动三份，删除逐档走——档数不固定（从没覆盖过就一档都没有），
-            // 每档都可能不存在，所以逐档 try/catch、失败不挡后面的档和删文档
+            // 备份链第五十四轮退役，但老用户库里还有存量档：删除逐档走——档数不固定
+            // （从没覆盖过就一档都没有），每档都可能不存在，所以逐档 try/catch、
+            // 失败不挡后面的档和删文档
             for (const bak of plan.bakPaths) {
               try {
                 await removeSvg(bak);
               } catch {
-                // 这一档不存在（keepBackup 关着/没覆盖过/已被挤掉），忽略
+                // 这一档不存在，忽略
               }
             }
             if (plan.doc) {
@@ -2390,23 +2559,21 @@ export default class ExcaliStudioPlugin extends Plugin {
 
   /**
    * 第二十一轮：覆盖保存——画板侧防抖自动保存 / ⌘S / ea 脚本的唯一落盘通道。
-   * 只覆盖已有文件：覆盖前按设置把上一版滚进 .bak 链（三份，见 writeBackup）；
-   * 存完刷新页面上已显示的图、对齐库里的 updated。新建走 createBoardFile
-   * （空 scene + 可选建档在那条链路），这里不再有首存分支。
+   * 只覆盖已有文件：新建走 createBoardFile（空 scene + 可选建档在那条链路）。
+   * 第五十四轮：备份链退役——白板库一个目录里每块板只留一个文件，写坏的兜底
+   * 交给思源自己的历史/数据快照。落盘前两道等价判定（正文逐字、载荷语义），
+   * 归一化带来的字节差不再刷 mtime、不再惊动同步。
    */
   private async saveSvg(svgText: string, currentPath: string | null): Promise<{ path: string }> {
     if (!currentPath) throw new Error("saveSvg 只接受已有文件（新建走 createBoardFile）");
     const target = toDataPath(currentPath);
-    // 导出是确定性的：内容没变时再写一遍只会刷新 mtime、并把同一版滚进备份链，
-    // 三档恢复点会退化成一份。读回比对失败（文件刚被外部删/改）时不拦截。
     let current: string | null = null;
     try {
       current = await getFileText(target);
     } catch {
-      // 读不到就照常覆盖，后面的 putSvg 会给出真正的错误
+      // 读不到就照常覆盖，下面的 putSvg 会给出真正的错误
     }
-    if (current === svgText) return { path: currentPath };
-    if (this.settings.keepBackup) await writeBackup(target, current ?? undefined);
+    if (current !== null && sceneTextsEquivalent(current, svgText)) return { path: currentPath };
     const saved = await putSvg(target, svgText);
     refreshAssetImages(saved);
     this.rememberRecent(saved);
@@ -2596,13 +2763,14 @@ export default class ExcaliStudioPlugin extends Plugin {
         content: `<div class="exs-picker">
   <input class="b3-text-field fn__block exs-name-input" value="${escapeAttr(suggested)}" />
   <div class="exs-name-tip">${t("位置")}：${escapeHtml(this.settings.saveDir)}</div>
-  <div class="fn__flex" style="gap:8px;margin-top:12px;justify-content:flex-end">
-    <button class="b3-button b3-button--outline exs-name-cancel" type="button">${t("取消")}</button>
-    <button class="b3-button b3-button--text exs-name-ok" type="button">${t("确定")}</button>
+  <div class="exs-name-actions">
+    <button class="b3-button exs-name-cancel" type="button">${t("取消")}</button>
+    <button class="b3-button exs-name-ok" type="button">${t("确定")}</button>
   </div>
 </div>`,
         destroyCallback: () => finish(null),
       });
+      dialog.element.classList.add("exs-name-dialog");
       const input = dialog.element.querySelector<HTMLInputElement>(".exs-name-input")!;
       dialog.element.querySelector<HTMLButtonElement>(".exs-name-cancel")!.addEventListener("click", () => finish(null));
       const ok = (): void => finish(sanitizeFileName(input.value || suggested));
@@ -2674,7 +2842,6 @@ export default class ExcaliStudioPlugin extends Plugin {
     let dirEl: HTMLInputElement | null = null;
     let accentEl: HTMLInputElement | null = null;
     let welcomeEl: HTMLInputElement | null = null;
-    let keepBackupEl: HTMLInputElement | null = null;
     let gridEl: HTMLInputElement | null = null;
     let boardDirEl: HTMLInputElement | null = null;
     let autoOpenEl: HTMLInputElement | null = null;
@@ -2692,7 +2859,6 @@ export default class ExcaliStudioPlugin extends Plugin {
           saveDir: dirEl?.value ?? this.settings.saveDir,
           accentStroke: accentEl?.checked ?? this.settings.accentStroke,
           showWelcome: welcomeEl?.checked ?? this.settings.showWelcome,
-          keepBackup: keepBackupEl?.checked ?? this.settings.keepBackup,
           gridModeEnabled: gridEl?.checked ?? this.settings.gridModeEnabled,
           boardDir: boardDirEl?.value ?? this.settings.boardDir,
           autoOpenBoard: autoOpenEl?.checked ?? this.settings.autoOpenBoard,
@@ -2838,24 +3004,9 @@ export default class ExcaliStudioPlugin extends Plugin {
     });
 
     /* 2026-10-15 阶段 A → 第二十一轮：自动保存从可关开关收敛为唯一保存形态
-       （防抖 + ⌘S），设置项删除——关掉它等于没有任何保存入口，是丢数据陷阱 */
-
-    this.setting.addItem({
-      title: t("覆盖前留备份"),
-      description: t("每次覆盖保存前把上一版滚进备份链：<文件名>.svg.bak.svg（最新）、.bak2、.bak3，最多三份；空画板或坏内容不入链、不进白板库列表。"),
-      createActionElement: () => {
-        const el = document.createElement("input");
-        el.type = "checkbox";
-        el.className = "b3-switch fn__flex-center";
-        el.checked = this.settings.keepBackup;
-        el.addEventListener("change", () => {
-          this.settings = { ...this.settings, keepBackup: el.checked };
-          this.persist();
-        });
-        keepBackupEl = el;
-        return el;
-      },
-    });
+       （防抖 + ⌘S），设置项删除——关掉它等于没有任何保存入口，是丢数据陷阱。
+       第五十四轮：「覆盖前留备份」一并删除——备份链会在白板库里给每块板配出
+       三档副本（实测 20MB 备份 / 2.7MB 白板），写坏文件的兜底交给思源历史。 */
 
     /* 2026-10-16 第七轮：网格是「视图偏好」而不是内容——记在设置里，开板时覆盖文件里的值 */
     this.setting.addItem({

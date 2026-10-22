@@ -21,6 +21,17 @@ const stripComments = (code) => code.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(
 const APP = stripComments(src("studio/StudioApp.tsx"));
 const DIRTY_SRC = src("studio/scene-dirty.ts");
 
+/**
+ * handleChange 函数体。依赖数组会随功能长（第五十三轮加了 syncDeck），
+ * 拿整串字面量当尾哨兵会让每次正常加依赖都变成「断言漂移」，这里按行认哨兵。
+ */
+const HANDLE_CHANGE = (() => {
+  const at = APP.indexOf("const handleChange = useCallback");
+  const rel = APP.slice(at).search(/\n\s*\[onBoardActive,[^\n]*\],/);
+  assert.ok(at > -1 && rel > -1, "handleChange 的头尾哨兵都要找得到");
+  return APP.slice(at, at + rel);
+})();
+
 const parts = (over = {}) => ({
   elementsHash: 1234,
   files: "a:100:image/png",
@@ -94,12 +105,11 @@ test("指纹只覆盖会落盘的东西：元素版本号 + 图片集合 + 那�
 });
 
 test("handleChange：收到回调不再一律置脏，比过指纹才脏", () => {
-  const at = APP.indexOf("const handleChange = useCallback");
-  const body = APP.slice(at, APP.indexOf("[onBoardActive, onGridChange, scheduleAutoSave, stampOf],", at));
+  const body = HANDLE_CHANGE;
   assert.match(
     body,
-    /if \(!dirtyRef\.current\) \{[\s\S]{0,200}if \(dirtyFromStamp\(stampOf\(sceneRef\.current\), baselineRef\.current\)\) \{[\s\S]{0,120}dirtyRef\.current = true;\s*setDirty\(true\);/,
-    "指纹比较必须套在「当前干净」的分支里，且只有判脏才置脏",
+    /if \(!presentingRef\.current && !dirtyRef\.current\) \{[\s\S]{0,200}if \(dirtyFromStamp\(stampOf\(sceneRef\.current\), baselineRef\.current\)\) \{[\s\S]{0,120}dirtyRef\.current = true;\s*setDirty\(true\);/,
+    "指纹比较必须套在「当前干净且没在放映」的分支里，且只有判脏才置脏",
   );
   assert.ok(body.indexOf("sceneRef.current = {") < body.indexOf("dirtyFromStamp("), "影子快照仍是最先写的那一步，flush 才有场景可用");
   assert.ok(body.indexOf("dirtyFromStamp(") < body.indexOf("dirtyRef.current = true"), "置脏排在指纹比较之后");
@@ -108,10 +118,12 @@ test("handleChange：收到回调不再一律置脏，比过指纹才脏", () =>
 });
 
 test("干净态才算指纹：一脏就不再算，拖拽时每帧成本为零", () => {
-  const at = APP.indexOf("const handleChange = useCallback");
-  const body = APP.slice(at, APP.indexOf("[onBoardActive, onGridChange, scheduleAutoSave, stampOf],", at));
+  const body = HANDLE_CHANGE;
   assert.equal((body.match(/dirtyFromStamp\(/g) || []).length, 1, "onChange 里只有一处指纹比较");
   assert.equal(/if \(dirtyRef\.current\)/.test(body), false, "不该反过来在脏态算指纹");
+  // 第五十三轮：片单同步也走「自己那份签名去重」，不许蹭 dirty 通道（放映器只读，不落盘）
+  assert.equal((body.match(/syncDeck\(/g) || []).length, 1, "每帧只调一次片单同步");
+  assert.ok(body.indexOf("syncDeck(") > body.indexOf("dirtyFromStamp("), "片单同步在脏判定之后：它是只读副产物");
 });
 
 test("基线取 vendor 现场场景，不取 initial prop", () => {

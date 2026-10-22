@@ -18,12 +18,15 @@ import { menuShortcut, boardHotkey } from "../src/studio/hotkeys.ts";
 import {
   ICON_EXPORT_IMAGE,
   ICON_FOLDER_OPEN,
+  ICON_FRAME_COLLAPSE,
   ICON_HELP,
   ICON_HIGHLIGHTER,
   ICON_REFRESH,
   ICON_RENAME,
   ICON_SAVE_AS,
+  ICON_SELECTION_FOLD,
   ICON_ZOOM_FIT,
+  SCRIPT_ICONS,
 } from "../src/studio/menu-icons.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -60,6 +63,8 @@ test("菜单图标：24 网格、绝对坐标，改坏会被卡住", () => {
     ICON_HIGHLIGHTER,
     ICON_REFRESH,
     ICON_FOLDER_OPEN,
+    ICON_FRAME_COLLAPSE,
+    ICON_SELECTION_FOLD,
   };
   for (const [name, d] of Object.entries(icons)) {
     assert.match(d, /^M/, `${name} 必须以 M 起笔`);
@@ -69,6 +74,11 @@ test("菜单图标：24 网格、绝对坐标，改坏会被卡住", () => {
       assert.ok(v >= 0 && v <= 24, `${name} 坐标 ${v} 越界（0..24）`);
     }
   }
+  // 2026-10-22：两个折叠脚本必须各有专属图标——都走齿轮回落时竖条上两枚八齿圆
+  // 小尺寸下像两太阳，用户分不清谁是谁（实测报障）
+  assert.equal(SCRIPT_ICONS["frame-collapse.md"], ICON_FRAME_COLLAPSE, "画框折叠配画框+下 V 图标");
+  assert.equal(SCRIPT_ICONS["selection-fold.md"], ICON_SELECTION_FOLD, "选区折叠配 ▶+文本行图标");
+  assert.notEqual(SCRIPT_ICONS["frame-collapse.md"], SCRIPT_ICONS["selection-fold.md"], "两个折叠脚本图标不许相同");
   // 第二十/二十一轮删除的功能的图标不该还在（留着就是死代码）
   assert.equal(read("src/studio/menu-icons.ts").includes("ICON_SAVE_TO_DOC"), false);
   assert.equal(read("src/studio/menu-icons.ts").includes("ICON_DOC_CARD"), false);
@@ -80,12 +90,13 @@ test("菜单图标：24 网格、绝对坐标，改坏会被卡住", () => {
 test("StudioMenu：走包导出的 MainMenu，九个独立自绘项，各带图标；素材库三项住在面板 ⋮ 菜单", () => {
   assert.match(MENU, /import \{ MainMenu \} from "@excalidraw\/excalidraw"/, "必须用包导出的 MainMenu，才会顶掉 DefaultMainMenu");
   assert.match(MENU, /<MainMenu>/, "根节点是 MainMenu");
-  for (const item of ["导出图片…", "重命名", "复制此白板的引用", "缩放适应", "Mermaid 转图元…", "嵌入思源块…", "运行脚本…", "AI 通道…", "帮助"]) {
+  for (const item of ["导出图片…", "重命名", "复制此白板的引用", "缩放适应", "Mermaid 转图元…", "嵌入思源块…", "拓展功能…", "AI 通道…", "帮助"]) {
     assert.ok(MENU.includes(`t("${item}")`), `菜单项缺了：${item}`);
   }
-  // 第四十四轮：AI 通道… 夹在「运行脚本…」和「帮助」之间（能力入口挨着，帮助永远垫底）
-  const order = ["运行脚本…", "AI 通道…", "帮助"].map((s) => MENU.indexOf(`t("${s}")`));
-  assert.ok(order[0] < order[1] && order[1] < order[2], "「AI 通道…」必须排在「运行脚本…」之后、「帮助」之前");
+  // 第五十一轮：「运行脚本…」更名「拓展功能…」（面板拆「拓展功能/脚本库」两类后 umbrella 改口）
+  // 第四十四轮：AI 通道… 夹在「拓展功能…」和「帮助」之间（能力入口挨着，帮助永远垫底）
+  const order = ["拓展功能…", "AI 通道…", "帮助"].map((s) => MENU.indexOf(`t("${s}")`));
+  assert.ok(order[0] < order[1] && order[1] < order[2], "「AI 通道…」必须排在「拓展功能…」之后、「帮助」之前");
   // 第三十三轮：笔刷组迁出菜单 → 画布右上角 PenRail；第三十八轮：PenRail 整条退役，
   // 荧光笔进右缘脚本竖条、墨笔交回 vendor 铅笔工具。菜单始终是纯「文件与功能」入口。
   // （2026-10-19：素材库三项（导入/刷新/打开文件夹）迁出 ☰——用户要求它们住进
@@ -104,8 +115,8 @@ test("StudioMenu：走包导出的 MainMenu，九个独立自绘项，各带图�
   assert.match(MENU, /onSelect=\{props\.onCopyRef\}/, "「复制此白板的引用」接宿主剪贴板通道");
   assert.match(MENU, /onSelect=\{props\.onZoomToFit\}/, "「缩放适应」接 api.scrollToContent");
   assert.match(MENU, /onSelect=\{props\.onMermaid\}/, "「Mermaid 转图元…」接 vendor TTDDialog 开启通道");
-  assert.match(MENU, /onSelect=\{props\.onRunScript\}/, "「运行脚本…」接宿主脚本选择器");
-  // 第四十一轮：「插入白板卡片…」从 ☰ 撤出——它是右缘竖条里的画布动作（契约见 rail-action.test）
+  assert.match(MENU, /onSelect=\{props\.onRunScript\}/, "「拓展功能…」接宿主脚本选择器");
+  // 第四十一轮：「插入白板卡片…」从 ☰ 撤出——它是右缘竖条里的拓展功能（契约见 rail-action.test）
   assert.equal(MENU.includes("插入白板卡片"), false, "「插入白板卡片…」已撤出菜单");
   assert.equal(MENU.includes("onInsertBoardCard"), false, "菜单回调通道已删");
   assert.equal(APP.includes("onInsertBoardCard="), false, "StudioMenu 不再有插入卡片回调");
@@ -137,11 +148,13 @@ test("StudioMenu：保留的内置项与刻意不放的四项", () => {
 
 /* ------------------------------ StudioApp 侧的减法 ------------------------------ */
 
-test("StudioApp：右上角不再挂任何东西（第三十八轮 PenRail 退役），自绘按钮层与杂项动作不回流", () => {
-  // 第三十三轮曾把笔刷条挂上 renderTopRightUI；第三十八轮整条撤掉——
-  // 荧光笔进右缘竖条，四支墨笔交回 vendor 铅笔工具。vendor 的「素材库」按钮
-  // 不依赖这个 prop，不传照常显示。
-  assert.equal(APP.includes("renderTopRightUI"), false, "右上角扩展位不再使用（六枚笔刷条已退役）");
+test("StudioApp：右上角只剩 vendor 扩展位里的一枚演示按钮（第三十八轮 PenRail 退役，第五十三轮重新开窗）", () => {
+  // 第三十三轮曾把自绘笔刷条挂上 renderTopRightUI；第三十八轮整条撤掉。
+  // 第五十三轮重新用这个 prop，但只挂一枚演示 ▶，且走 vendor 官方扩展位——
+  // 位置由 vendor 排在「素材库」⧉ 左侧，不再有自绘绝对定位层。
+  assert.match(APP, /renderTopRightUI=\{renderTopRightUI\}/, "右上角扩展位重新启用：只给演示入口");
+  assert.equal((APP.match(/renderTopRightUI=/g) || []).length, 1, "扩展位只挂一处，不许再塞别的按钮");
+  assert.match(APP, /className="exs-present-fab"/, "右上角那枚就是演示 FAB");
   assert.equal(APP.includes("PenRail"), false, "PenRail.tsx 已整文件删除");
   assert.equal(APP.includes("exs-topright"), false, "旧自绘按钮层的类名不许回流");
   assert.match(APP, /<StudioMenu/, "菜单必须作为 Excalidraw 的 children 渲染（tunnel 才接得上）");
@@ -171,10 +184,19 @@ test("StudioApp：右上角不再挂任何东西（第三十八轮 PenRail 退�
 });
 
 test("只读 / 禅模式：我们不再自己实现（画布右键菜单已有）", () => {
-  assert.equal(APP.includes("viewModeEnabled"), false, "别再自己写只读开关：右键菜单里 vendor 固定给了 actionToggleViewMode");
+  // 第五十三轮：放映期间会把 viewModeEnabled 临时打开、退出按快照复原。
+  // 这不是「自己做只读开关」——它没有菜单项、没有工具条按钮，只活在放映进/出两处。
   assert.equal(APP.includes("zenModeEnabled"), false, "同上，禅模式走 actionToggleZenMode");
-  assert.equal(APP.includes("viewMode"), false);
   assert.equal(APP.includes("zenMode"), false);
+  assert.equal(APP.includes("actionToggleViewMode"), false, "不许把 vendor 的只读动作搬到我们自己菜单里");
+  const at = APP.indexOf("const enterPresentation");
+  const end = APP.indexOf("const startPresentation", at);
+  // 快照类型里有一个 `viewModeEnabled: boolean` 字段（只是记下进片场前的值），
+  // 它不构成开关；把类型声明剥掉之后，外面不许再有任何读写。
+  const outside = (APP.slice(0, at) + APP.slice(end)).replace(/viewModeEnabled\s*:\s*boolean;?/g, "");
+  assert.equal(outside.includes("viewModeEnabled"), false, "viewModeEnabled 只许出现在放映的进/出两处");
+  assert.equal((APP.match(/viewModeEnabled:\s*true/g) ?? []).length, 1, "进片场只开一次口子");
+  assert.equal((APP.match(/viewModeEnabled:\s*snap\.viewModeEnabled/g) ?? []).length, 1, "退片场按快照复原");
 });
 
 /* ------------------------------ 文案与样式 ------------------------------ */

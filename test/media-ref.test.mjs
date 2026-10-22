@@ -77,6 +77,15 @@ test("T4 槽位：读、按主题挑、落盘补当前主题", () => {
   assert.equal(patched.excaliDarkBg, "#121212", "另一主题槽位不被亮色值覆盖");
   const patchedDark = withThemeBgSlot({ viewBackgroundColor: "" }, "dark");
   assert.equal(patchedDark.excaliDarkBg, "", "空背景（跟主题默认）也照存，persistableAppState 会剥空串");
+  // 第五十四轮：vendor restore 会剥掉自定义键，落盘时 appState 里根本没有另一主题的槽位
+  // —— 必须从打开时读到的 slots 里带回来，否则「亮色设过 A、切暗色存一次」就把 A 洗没了
+  const vendorStripped = { viewBackgroundColor: "#121212" };
+  const kept = withThemeBgSlot(vendorStripped, "dark", { light: "#ffffff", dark: "" });
+  assert.equal(kept.excaliLightBg, "#ffffff", "亮槽位从 slots 带过来，不被暗色落盘洗掉");
+  assert.equal(kept.excaliDarkBg, "#121212", "当前主题槽位写当前背景");
+  assert.equal(withThemeBgSlot(vendorStripped, "dark", { light: "", dark: "#999" }).excaliLightBg, undefined, "两边都空 = 不落键（persistableAppState 同口径）");
+  // appState 自带槽位优先于 slots（会话中改过设置时以内存态为准）
+  assert.equal(withThemeBgSlot({ viewBackgroundColor: "#121212", excaliLightBg: "#eeeeee" }, "dark", { light: "#ffffff", dark: "" }).excaliLightBg, "#eeeeee");
 });
 
 test("docIdFromLink：只认 siyuan:doc/<id>，其余（http、裸 id、空）全拒", () => {

@@ -280,7 +280,7 @@ test("draw：新建到默认专属目录，list/read 能看见（中文标题与
   assert.equal(detail.elements.filter((e) => e.type === "image").length, 0);
 });
 
-test("draw：追加到已有白板、落点在新内容下方、BAK 三档滚动", async () => {
+test("draw：追加到已有白板、落点在新内容下方、不生出备份档", async () => {
   const ws = makeWorkspace();
   const kernel = await boot(ws, { settings: BASE_SETTINGS });
   const draw = cap(kernel, "excali_file_draw_board").handler;
@@ -306,17 +306,14 @@ test("draw：追加到已有白板、落点在新内容下方、BAK 三档滚动
     "追加内容要落在旧包围盒下方 80px",
   );
 
-  const bak1 = join(ws, "data", `${first.path.replace(/\.svg$/i, "")}.svg.bak.svg`);
-  assert.ok(existsSync(bak1), "覆盖前要留槽 1");
-  assert.equal(readFileSync(bak1, "utf8"), beforeText, "槽 1 是覆盖前的原文");
-
+  // 第五十四轮：备份链退役——覆盖三次，目录里也只有这一块板一个文件
   const third = await draw({ board: "追加板", plan: { nodes: ["丁"] } });
-  const bak2 = join(ws, "data", `${first.path.replace(/\.svg$/i, "")}.svg.bak2.svg`);
-  assert.ok(existsSync(bak2), "第二次覆盖后旧备份滚到槽 2");
+  assert.equal(third.created, false);
+  const dirFiles = readdirSync(join(ws, "data", "assets", "excali")).filter((n) => n.endsWith(".svg"));
+  assert.deepEqual(dirFiles, [first.path.split("/").pop()], "内核写侧不许生出 .bak");
 
   const listed = await cap(kernel, "excali_file_list_boards").handler({});
   assert.equal(listed.total, 1, ".bak 不能进白板列表");
-  assert.equal(third.created, false);
 });
 
 test("draw：命名板不存在不自动新建；路径越界与 .. 穿越都拒绝", async () => {
