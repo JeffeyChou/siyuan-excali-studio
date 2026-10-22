@@ -11,6 +11,7 @@
 ### 修复
 
 - **网页端（浏览器 / PWA）打不开画板**：点开白板提示「画板引擎加载失败：process is not defined」。构建时没有替换 `process.env.NODE_ENV`，浏览器里没有 `process`；桌面端不受影响。
+- **插件更新后网页端仍用旧的画板引擎**：`engine.js` 改为每次加载时向服务器校验，不再被浏览器缓存几个小时。
 - **白板库的修改时间全显示成 1970-01-21**：思源 `readDir` 返回的是秒，之前当成毫秒用了。现在白板库、「打开白板…」和智能体工具（`excali_list_boards` / 内核 MCP 的 `excali_file_list_boards`）返回的 `updatedAt` 都是正确的时间。
 
 ## v0.3.0（2026-10-22）
